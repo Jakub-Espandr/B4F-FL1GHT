@@ -3,7 +3,16 @@
 All notable changes to this project will be documented in this file.
 
 
-## [0.2.0] - 2025-06-07
+## [0.3.0] - 2025-06-06
+
+### Added
+- Step response plots for Roll, Pitch, and Yaw
+- Interactive tooltips for step response charts (showing time and value on hover)
+- Annotation box showing max response and response time for each axis
+
+---
+
+## [0.2.0] - 2025-06-06
 
 ### Added
 - Spectral Analyzer tab with power spectral density (PSD) plots for Roll, Pitch, and Yaw axes
@@ -22,7 +31,9 @@ All notable changes to this project will be documented in this file.
 - Symmetric y-axis scaling for time domain plots
 - Various import and plotting bugs
 
-## [0.1.0] - 2025-06-06
+---
+
+## [0.1.0] - 2025-06-05
 
 ### Added
 - Initial project setup

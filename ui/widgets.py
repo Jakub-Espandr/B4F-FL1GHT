@@ -8,12 +8,17 @@ from PySide6.QtWidgets import (
     QCheckBox, QLabel, QMessageBox, QGroupBox, QScrollArea,
     QSlider, QProgressBar, QSizePolicy, QComboBox, QToolTip
 )
-from PySide6.QtGui import QFont, QColor, QPainter
+from PySide6.QtGui import QFont, QColor, QPainter, QPen
 from PySide6.QtCore import Qt, QMargins
-from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis
+from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis, QAreaSeries, QCategoryAxis
 from utils.config import FONT_CONFIG, COLOR_PALETTE, MOTOR_COLORS
 from utils.data_processor import get_clean_name
 import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_qtagg import FigureCanvas, NavigationToolbar2QT
+from utils.step_response import StepResponseCalculator
+from utils.step_trace import StepTrace
+import os
 
 class FeatureSelectionWidget(QWidget):
     def __init__(self, parent=None):
@@ -652,5 +657,217 @@ class SpectralAnalyzerWidget(QWidget):
         # Format tooltip text
         tooltip = f"Frequency: {freq:.1f} Hz\nPSD: {psd:.1f} dB/Hz"
 
+        # Show tooltip
+        QToolTip.showText(event.globalPos(), tooltip, chart_view) 
+
+class StepResponseWidget(QWidget):
+    def __init__(self, feature_widget, parent=None):
+        super().__init__(parent)
+        self.feature_widget = feature_widget
+        self.df = None
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.charts_container = QWidget()
+        charts_layout = QVBoxLayout(self.charts_container)
+        charts_layout.setSpacing(10)
+        self.chart_views = []
+        for axis in ['Roll', 'Pitch', 'Yaw']:
+            chart_view = QChartView()
+            chart_view.setRenderHint(QPainter.Antialiasing)
+            chart_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            chart_view.setMinimumHeight(200)
+            chart = QChart()
+            chart.setTitle(f"{axis} Step Response")
+            title_font = QFont()
+            title_font.setPointSize(10)
+            chart.setTitleFont(title_font)
+            chart.legend().setVisible(True)
+            chart.setMargins(QMargins(10, 10, 10, 10))
+            chart_view.setChart(chart)
+            # Connect mouse move event for tooltips
+            chart_view.setMouseTracking(True)
+            chart_view.mouseMoveEvent = lambda event, cv=chart_view: self.show_tooltip(event, cv)
+            self.chart_views.append(chart_view)
+            charts_layout.addWidget(chart_view)
+        layout.addWidget(self.charts_container)
+
+    def update_step_response(self, df):
+        if df is None or df.empty:
+            print('[StepResponseWidget] DataFrame is empty or None.')
+            return
+        self.df = df
+        axes_names = ['roll', 'pitch', 'yaw']
+        # Get log name from the main viewer
+        log_name = "Log"
+        parent = self.parent()
+        while parent is not None and not hasattr(parent, 'current_file'):
+            parent = parent.parent()
+        if parent and hasattr(parent, 'current_file') and parent.current_file:
+            log_name = os.path.basename(parent.current_file)
+        for i, axis_name in enumerate(axes_names):
+            chart_view = self.chart_views[i]
+            chart = chart_view.chart()
+            chart.removeAllSeries()
+            chart.legend().setVisible(True)
+            chart.setTitle(f"{axis_name.capitalize()} Step Response")
+            # Remove all existing axes before adding new ones
+            for axis in chart.axes():
+                chart.removeAxis(axis)
+            # Set up axes
+            axis_x = QValueAxis()
+            axis_x.setTitleText('Time (ms)')
+            axis_x.setRange(0, 500)
+            axis_x.setLabelFormat('%d')
+            axis_x.setTickCount(6)
+            axis_x.setTitleVisible(True)
+            axis_x.setLabelsVisible(True)
+            axis_x.setGridLineVisible(True)
+            axis_x.setLinePenColor(Qt.black)
+            axis_x.setLabelsColor(Qt.black)
+            # Use QCategoryAxis for Y axis to guarantee ticks at 0, 0.25, ..., 1.75
+            axis_y = QCategoryAxis()
+            axis_y.setTitleText('Response')
+            axis_y.setRange(0., 1.75)
+            axis_y.setLabelsPosition(QCategoryAxis.AxisLabelsPositionOnValue)
+            for v in [0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75]:
+                axis_y.append(f'{v:.2f}', v)
+            axis_y.setTitleVisible(True)
+            axis_y.setLabelsVisible(True)
+            axis_y.setGridLineVisible(True)
+            axis_y.setLinePenColor(Qt.black)
+            axis_y.setLabelsColor(Qt.black)
+            chart.addAxis(axis_x, Qt.AlignBottom)
+            chart.addAxis(axis_y, Qt.AlignLeft)
+            # Find columns
+            gyro_col = f'gyroADC[{i}] (deg/s)'
+            p_err_col = f'axisP[{i}]'
+            throttle_col = 'rcCommand[3]'
+            pid_val = None
+            for pid_key in [f'{axis_name}pid', f'{axis_name.upper()}PID', f'{axis_name[0]}pid']:
+                pid_col = [col for col in df.columns if pid_key in col.lower()]
+                if pid_col:
+                    pid_val = df[pid_col[0]].iloc[0]
+                    break
+            if gyro_col in df.columns and p_err_col in df.columns and throttle_col in df.columns:
+                time = df['time'].values
+                gyro = df[gyro_col].values
+                p_err = df[p_err_col].values
+                throttle = df[throttle_col].values
+                try:
+                    pid_p = float(str(pid_val).split(',')[0]) if pid_val is not None and pid_val != 'N/A' else 1.0
+                except Exception:
+                    pid_p = 1.0
+                axis_data = {
+                    'name': axis_name,
+                    'time': time,
+                    'p_err': p_err,
+                    'gyro': gyro,
+                    'P': pid_p,
+                    'throttle': throttle
+                }
+                trace = StepTrace(axis_data)
+                t = trace.time_resp
+                mean, std, _ = trace.resp_low
+                t_ms = [float(x) * 1000 for x in t]
+                t_ms = [x - t_ms[0] for x in t_ms]  # Ensure starts at 0
+                # Reference line at y=1.0 (add first, so it's behind the data)
+                if t_ms and len(t_ms) > 1:
+                    ref_line = QLineSeries()
+                    ref_line.append(t_ms[0], 1.0)
+                    ref_line.append(t_ms[-1], 1.0)
+                    ref_pen = QPen(Qt.black)
+                    ref_pen.setWidthF(1.7)
+                    ref_line.setPen(ref_pen)
+                    chart.addSeries(ref_line)
+                    ref_line.attachAxis(axis_x)
+                    ref_line.attachAxis(axis_y)
+                    for marker in chart.legend().markers(ref_line):
+                        marker.setVisible(False)
+                # Step response mean line (add after, so it's on top)
+                color = QColor(*COLOR_PALETTE.get('Gyro (filtered)', (0, 255, 255)))
+                series = QLineSeries()
+                t_ms = [float(x) * 1000 for x in t]
+                t_ms = [x - t_ms[0] for x in t_ms]  # Ensure starts at 0
+                mean = list(mean)
+                for x, y in zip(t_ms, mean):
+                    series.append(x, y)
+                series.setName(f"{log_name}")
+                pen = series.pen()
+                pen.setColor(color)
+                pen.setWidthF(1.5)
+                series.setPen(pen)
+                chart.addSeries(series)
+                series.attachAxis(axis_x)
+                series.attachAxis(axis_y)
+                # Legend: PID values
+                if pid_val and pid_val != 'N/A':
+                    try:
+                        p, i, d = map(float, str(pid_val).split(','))
+                        pid_text = f"{p:.0f}; {i:.0f}; {d:.0f}"
+                    except:
+                        pid_text = f"PID: {pid_val}"
+                else:
+                    pid_text = "PID: N/A"
+                chart.legend().markers(series)[0].setLabel(f"{log_name}\n{pid_text}")
+            else:
+                chart.setTitle(f'{axis_name.capitalize()} Step Response (missing data)')
+            chart.setBackgroundBrush(Qt.white)
+            chart.setPlotAreaBackgroundBrush(Qt.white)
+            chart.setPlotAreaBackgroundVisible(True)
+            chart.legend().setVisible(True)
+            chart.legend().setLabelColor(Qt.black)
+            chart.legend().setFont(QFont("Arial", 9))
+            chart.update()
+            # Compute max Y and time to reach 0.5 (in ms)
+            max_y = float(np.max(mean))
+            max_idx = int(np.argmax(mean))
+            max_t = float(t_ms[max_idx]) if max_idx < len(t_ms) else 0.0
+            t_05 = next((float(ti) for ti, yi in zip(t_ms, mean) if yi >= 0.5), None)
+            # Prepare annotation text in ms
+            annotation = f"Max: {max_y:.2f} at t={max_t:.0f}ms  Response: {t_05:.0f}ms" if t_05 is not None else f"Max: {max_y:.2f} at t={max_t:.0f}ms  Response: N/A"
+            # Add annotation as a label in the top-right (move more left and down)
+            label = QLabel(annotation)
+            label.setStyleSheet("background: rgba(255,255,255,0.8); color: black; font-size: 11px; padding: 2px;")
+            label.setAlignment(Qt.AlignRight | Qt.AlignTop)
+            proxy = chart_view.scene().addWidget(label)
+            proxy.setZValue(100)
+            proxy.setPos(chart_view.width() - 300, 30)
+
+    def show_tooltip(self, event, chart_view):
+        chart = chart_view.chart()
+        if not chart:
+            return
+        # Convert mouse position to chart coordinates
+        pos = chart_view.mapToScene(event.pos())
+        chart_pos = chart.mapFromScene(pos)
+        # Get axes
+        axes_x = chart.axes(Qt.Horizontal)
+        axes_y = chart.axes(Qt.Vertical)
+        if not axes_x or not axes_y:
+            return
+        axis_x = axes_x[0]
+        axis_y = axes_y[0]
+        # Get axis ranges
+        x_min = axis_x.min()
+        x_max = axis_x.max()
+        y_min = axis_y.min()
+        y_max = axis_y.max()
+        # Get plot area geometry
+        plot_area = chart.plotArea()
+        left = plot_area.left()
+        right = plot_area.right()
+        top = plot_area.top()
+        bottom = plot_area.bottom()
+        # Map pixel to axis value
+        if right - left == 0 or bottom - top == 0:
+            return
+        t_ms = x_min + (x_max - x_min) * (chart_pos.x() - left) / (right - left)
+        y_val = y_max - (y_max - y_min) * (chart_pos.y() - top) / (bottom - top)
+        # Format tooltip text
+        tooltip = f"Time: {t_ms:.1f} ms\nValue: {y_val:.2f}"
         # Show tooltip
         QToolTip.showText(event.globalPos(), tooltip, chart_view) 

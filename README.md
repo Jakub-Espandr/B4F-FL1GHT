@@ -11,7 +11,12 @@ A modern, feature-rich blackbox log viewer for FPV drone flight data analysis. D
   - Dual plots for each axis: full frequency range and zoomed-in 0–100 Hz view  
   - Interactive tooltips show frequency and PSD values on hover  
   - Adjustable smoothing (window size) for spectral analysis
-- **Interactive Controls**:  
+- **Step Response Analysis**: Visualize step response for Roll, Pitch, and Yaw axes using native QtCharts  
+  - Vertically stacked plots for each axis, matching the Spectral Analyzer layout  
+  - Interactive tooltips show time (ms) and response value on hover  
+  - Annotation box displays max response and response time for each axis  
+  - Bold, black horizontal reference line at y=1.0 for easy comparison  
+- **Interactive Controls**:
   - Zoom and pan with the mouse  
   - Selectable data types (gyro, PID, RC, etc.)  
   - Adjustable smoothing and resolution  
