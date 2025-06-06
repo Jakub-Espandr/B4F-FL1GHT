@@ -1,6 +1,6 @@
-PySide6>=6.6.0
-pandas>=2.0.0
-numpy>=1.24.0
-matplotlib>=3.7.0  # For plotting capabilities
-scipy>=1.10.0     # For signal processing
-blackbox-decode   # For BBL file decoding 
+PySide6>=6.0.0        # Qt bindings for Python (UI framework)
+pandas>=1.3.0         # Data manipulation and CSV parsing
+numpy>=1.20.0         # Numerical computing and array operations
+matplotlib>=3.4.0     # Plotting backend (for some visualizations)
+scipy>=1.7.0          # Signal processing (FFT, spectral analysis)
+blackbox-decode       # For BBL file decoding 

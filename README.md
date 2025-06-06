@@ -7,15 +7,20 @@ A modern, feature-rich blackbox log viewer for FPV drone flight data analysis. D
 ## ✨ Features
 
 - **Multi-Chart Display**: View Roll, Pitch, Yaw, and Throttle data simultaneously  
+- **Spectral Analyzer**: Analyze power spectral density (PSD) for Roll, Pitch, and Yaw axes  
+  - Dual plots for each axis: full frequency range and zoomed-in 0–100 Hz view  
+  - Interactive tooltips show frequency and PSD values on hover  
+  - Adjustable smoothing (window size) for spectral analysis
 - **Interactive Controls**:  
   - Zoom and pan with the mouse  
   - Selectable data types (gyro, PID, RC, etc.)  
   - Adjustable smoothing and resolution  
+  - Customizable axis ticks and improved tab highlighting
 - **Data Categories**:  
   - Gyro (raw, unfiltered, scaled)  
   - PID controller terms (P, I, D)  
   - RC commands  
-  - Motor outputs and eRPM  
+  - Motor outputs
 - **Responsive and Lightweight**:  
   - Built with PySide6  
   - Fast rendering with efficient memory usage  
@@ -109,6 +114,6 @@ See the [LICENSE](https://github.com/Jakub-Espandr/B4F-FL1GHT/raw/main/LICENSE) 
 
 ## 🙏 Acknowledgments
 
-- Built with ❤️ using PySide6 and open-source tools  
+- Built with ❤️ using PySide6 and open-source libraries
 
 ---

@@ -1,3 +1,8 @@
+"""
+This file is part of a project licensed under the Non-Commercial Public License (NCPL).
+See LICENSE file or contact the authors for full terms.
+"""
+
 import os
 from PySide6.QtGui import QFontDatabase
 
@@ -29,6 +34,16 @@ FONT_CONFIG = {
         'family': 'fccTYPO'
     },
     'checkbox': {
+        'size': 14,
+        'weight': 'normal',
+        'family': 'fccTYPO'
+    },
+    'tab': {
+        'size': 14,
+        'weight': 'normal',
+        'family': 'fccTYPO'
+    },
+    'combo': {
         'size': 14,
         'weight': 'normal',
         'family': 'fccTYPO'

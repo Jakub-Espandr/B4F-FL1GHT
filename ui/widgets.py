@@ -6,11 +6,14 @@ See LICENSE file or contact the authors for full terms.
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFileDialog,
     QCheckBox, QLabel, QMessageBox, QGroupBox, QScrollArea,
-    QSlider, QProgressBar, QSizePolicy
+    QSlider, QProgressBar, QSizePolicy, QComboBox, QToolTip
 )
-from PySide6.QtGui import QFont, QColor
-from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont, QColor, QPainter
+from PySide6.QtCore import Qt, QMargins
+from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis
 from utils.config import FONT_CONFIG, COLOR_PALETTE, MOTOR_COLORS
+from utils.data_processor import get_clean_name
+import numpy as np
 
 class FeatureSelectionWidget(QWidget):
     def __init__(self, parent=None):
@@ -295,6 +298,19 @@ class FeatureSelectionWidget(QWidget):
         
         self.line_width_label.setText(f"{line_width:.1f}px")
 
+    def notify_spectral_update(self, _):
+        parent = self.parent()
+        # Find the main viewer (FL1GHTViewer) in the parent chain
+        while parent is not None and not hasattr(parent, 'spectral_widget'):
+            parent = parent.parent() if hasattr(parent, 'parent') else None
+        if parent and hasattr(parent, 'spectral_widget') and hasattr(parent, 'df'):
+            parent.spectral_widget.update_spectrum(parent.df)
+
+    def set_time_domain_mode(self, enabled: bool):
+        # Enable throttle and motor outputs only in time domain mode
+        self.throttle_checkbox.setEnabled(enabled)
+        self.motor_checkbox.setEnabled(enabled)
+
 class ControlWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -351,3 +367,290 @@ class ControlWidget(QWidget):
         if FONT_CONFIG[font_type]['weight'] == 'bold':
             font.setBold(True)
         return font 
+
+class SpectralAnalyzerWidget(QWidget):
+    def __init__(self, feature_widget, parent=None):
+        super().__init__(parent)
+        self.df = None
+        self.feature_widget = feature_widget
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        # Smoothing setup controls
+        smoothing_group = QGroupBox("Smoothing Setup")
+        smoothing_layout = QHBoxLayout()
+        self.window_sizes = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768]
+        self.window_size_slider = QSlider(Qt.Horizontal)
+        self.window_size_slider.setMinimum(0)
+        self.window_size_slider.setMaximum(len(self.window_sizes) - 1)
+        self.window_size_slider.setValue(5)  # Default to 8192
+        self.window_size_slider.setTickInterval(1)
+        self.window_size_slider.setTickPosition(QSlider.TicksBelow)
+        self.window_size_slider.setSingleStep(1)
+        # Smoothing labels
+        smoothing_layout.addWidget(QLabel("Smoothing: Max"))
+        smoothing_layout.addWidget(self.window_size_slider)
+        smoothing_layout.addWidget(QLabel("Smoothing: Min"))
+        self.window_size_slider.valueChanged.connect(lambda _: self.update_spectrum(self.df))
+        smoothing_group.setLayout(smoothing_layout)
+        layout.addWidget(smoothing_group)
+
+        # Charts container
+        self.charts_container = QWidget()
+        charts_layout = QVBoxLayout(self.charts_container)
+        charts_layout.setSpacing(10)
+        self.chart_views = []  # Will now hold tuples: (full_range_view, zoomed_view)
+        for axis in ['Roll', 'Pitch', 'Yaw']:
+            row_layout = QHBoxLayout()
+            # Full range plot
+            chart_view_full = QChartView()
+            chart_view_full.setRenderHint(QPainter.Antialiasing)
+            chart_view_full.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            chart_view_full.setMinimumHeight(200)
+            chart_full = QChart()
+            chart_full.setTitle(f"{axis} Spectrum (Full)")
+            title_font = QFont()
+            title_font.setPointSize(10)
+            chart_full.setTitleFont(title_font)
+            chart_full.legend().setVisible(True)
+            chart_full.setMargins(QMargins(10, 10, 10, 10))
+            chart_view_full.setChart(chart_full)
+            chart_view_full.setMouseTracking(True)
+            chart_view_full.mouseMoveEvent = lambda event, cv=chart_view_full: self.show_tooltip(event, cv)
+            row_layout.addWidget(chart_view_full, stretch=3)  # Make full plot wider
+            # Zoomed plot (0-100 Hz)
+            chart_view_zoom = QChartView()
+            chart_view_zoom.setRenderHint(QPainter.Antialiasing)
+            chart_view_zoom.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            chart_view_zoom.setMinimumHeight(200)
+            chart_view_zoom.setMaximumWidth(400)  # Make zoomed plot even wider
+            chart_zoom = QChart()
+            chart_zoom.setTitle(f"{axis} Spectrum (0-100 Hz)")
+            chart_zoom.setTitleFont(title_font)
+            chart_zoom.legend().setVisible(True)
+            chart_zoom.setMargins(QMargins(10, 10, 10, 10))
+            chart_view_zoom.setChart(chart_zoom)
+            chart_view_zoom.setMouseTracking(True)
+            chart_view_zoom.mouseMoveEvent = lambda event, cv=chart_view_zoom: self.show_tooltip(event, cv)
+            row_layout.addWidget(chart_view_zoom, stretch=1)  # Make zoomed plot narrower
+            # Store both views as a tuple
+            self.chart_views.append((chart_view_full, chart_view_zoom))
+            charts_layout.addLayout(row_layout)
+        layout.addWidget(self.charts_container)
+
+    def create_font(self, font_type):
+        font = QFont(FONT_CONFIG[font_type]['family'])
+        font.setPointSize(FONT_CONFIG[font_type]['size'])
+        if FONT_CONFIG[font_type]['weight'] == 'bold':
+            font.setBold(True)
+        return font
+
+    def update_spectrum(self, df):
+        if df is not None:
+            self.df = df
+        df = self.df
+        if df is None or df.empty:
+            print("[SpectralAnalyzer] DataFrame is empty or None.")
+            return
+        # Welch parameters from user controls
+        window_size = self.window_sizes[self.window_size_slider.value()]
+        window_type = 'hann'  # Fixed
+        overlap = 0.5        # Fixed (50%)
+
+        # Determine which types are selected (Gyro raw, Gyro filtered, PID, Setpoint, RC Command)
+        selected_types = []
+        fw = self.feature_widget
+        if hasattr(fw, 'gyro_unfilt_checkbox') and fw.gyro_unfilt_checkbox.isChecked():
+            selected_types.append('raw')
+        if hasattr(fw, 'gyro_scaled_checkbox') and fw.gyro_scaled_checkbox.isChecked():
+            selected_types.append('filtered')
+        if hasattr(fw, 'pid_p_checkbox') and fw.pid_p_checkbox.isChecked():
+            selected_types.append('pterm')
+        if hasattr(fw, 'pid_i_checkbox') and fw.pid_i_checkbox.isChecked():
+            selected_types.append('iterm')
+        if hasattr(fw, 'pid_d_checkbox') and fw.pid_d_checkbox.isChecked():
+            selected_types.append('dterm')
+        if hasattr(fw, 'setpoint_checkbox') and fw.setpoint_checkbox.isChecked():
+            selected_types.append('setpoint')
+        if hasattr(fw, 'rc_checkbox') and fw.rc_checkbox.isChecked():
+            selected_types.append('rc')
+        if not selected_types:
+            print("[SpectralAnalyzer] No types selected, nothing will be plotted.")
+            return
+        print(f"[SpectralAnalyzer] Selected types: {selected_types}")
+
+        # Map type to column patterns, legend, and color
+        type_to_pattern = {
+            'raw': ('gyroUnfilt[{}]', 'Gyro (raw)', QColor(255, 0, 255)),
+            'filtered': ('gyroADC[{}] (deg/s)', 'Gyro (filtered)', QColor(0, 255, 255)),
+            'pterm': ('axisP[{}]', 'P-Term', QColor(255, 200, 0)),
+            'iterm': ('axisI[{}]', 'I-Term', QColor(255, 128, 0)),
+            'dterm': ('axisD[{}]', 'D-Term', QColor(128, 0, 255)),
+            'setpoint': ('setpoint[{}]', 'Setpoint', QColor(0, 0, 0)),
+            'rc': ('rcCommand[{}]', 'RC Command', QColor(128, 128, 0)),
+        }
+        axis_names = ['Roll', 'Pitch', 'Yaw']
+        axis_indices = [0, 1, 2]
+
+        time_data = df['time'].values.astype(float)
+        if time_data.max() > 1e6:
+            time_data = time_data / 1_000_000.0
+        elif time_data.max() > 1e3:
+            time_data = time_data / 1_000.0
+        time_data = time_data - time_data.min()
+        dt = np.mean(np.diff(time_data))
+        fs = 1.0 / dt if dt > 0 else 0.0
+        print(f"[SpectralAnalyzer] Sampling rate: {fs:.2f} Hz")
+
+        from scipy import signal
+
+        legend_labels = set()
+        plotted_types = set()
+        for axis_idx, axis_name in enumerate(['Roll', 'Pitch', 'Yaw']):
+            chart_full = self.chart_views[axis_idx][0].chart()
+            chart_zoom = self.chart_views[axis_idx][1].chart()
+            chart_full.removeAllSeries()
+            chart_zoom.removeAllSeries()
+            chart_full.legend().setVisible(False)
+            chart_zoom.legend().setVisible(False)
+            series_list = []
+            for t in selected_types:
+                pattern, label, color = type_to_pattern[t]
+                col_name = pattern.format(axis_idx)
+                if col_name in df.columns:
+                    axis_data = df[col_name].values
+                    if len(axis_data) < 2:
+                        continue
+                    nperseg = window_size
+                    noverlap = int(window_size * overlap)
+                    freqs, psd = signal.welch(axis_data, fs=fs, nperseg=nperseg, window=window_type, noverlap=noverlap, scaling='density')
+                    psd_db = 10 * np.log10(psd + 1e-10)
+                    # Full range series
+                    series_full = QLineSeries()
+                    series_full.setName(label)
+                    for f, p in zip(freqs, psd_db):
+                        series_full.append(f, p)
+                    pen = series_full.pen()
+                    pen.setColor(color)
+                    pen.setWidthF(1.5)
+                    series_full.setPen(pen)
+                    chart_full.addSeries(series_full)
+                    # Zoomed series (0-100 Hz)
+                    series_zoom = QLineSeries()
+                    series_zoom.setName(label)
+                    for f, p in zip(freqs, psd_db):
+                        if f <= 100:
+                            series_zoom.append(f, p)
+                    pen_zoom = series_zoom.pen()
+                    pen_zoom.setColor(color)
+                    pen_zoom.setWidthF(1.5)
+                    series_zoom.setPen(pen_zoom)
+                    chart_zoom.addSeries(series_zoom)
+                    series_list.append(series_full)
+                    legend_labels.add((label, color.name()))
+                    plotted_types.add(t)
+            # Axes for full range
+            chart_full.createDefaultAxes()
+            axes_x_full = chart_full.axes(Qt.Horizontal)
+            axes_y_full = chart_full.axes(Qt.Vertical)
+            if axes_x_full and axes_y_full:
+                axis_x = axes_x_full[0]
+                axis_y = axes_y_full[0]
+                axis_x.setTitleText("Frequency (Hz)")
+                axis_x.setTitleVisible(True)
+                axis_x.setLabelsVisible(True)
+                axis_x.setGridLineVisible(True)
+                axis_x.setRange(0, int(fs/2))
+                axis_x.setTickCount(int(fs/2 / 50) + 1)
+                axis_x.setLabelFormat("%.0f")
+                axis_x.setTickInterval(50)
+                axis_x.setTickAnchor(0)
+                axis_x.setTickType(QValueAxis.TicksDynamic)
+                axis_x.setLabelsFont(QFont("Arial", 8))
+                axis_y.setTitleText("Spectral Power (dB)")
+                axis_y.setTitleVisible(True)
+                axis_y.setLabelsVisible(True)
+                axis_y.setGridLineVisible(True)
+                axis_y.setRange(-50, 20)
+            # Axes for zoomed (0-100 Hz)
+            chart_zoom.createDefaultAxes()
+            axes_x_zoom = chart_zoom.axes(Qt.Horizontal)
+            axes_y_zoom = chart_zoom.axes(Qt.Vertical)
+            if axes_x_zoom and axes_y_zoom:
+                axis_xz = axes_x_zoom[0]
+                axis_yz = axes_y_zoom[0]
+                axis_xz.setTitleText("Frequency (Hz)")
+                axis_xz.setTitleVisible(True)
+                axis_xz.setLabelsVisible(True)
+                axis_xz.setGridLineVisible(True)
+                axis_xz.setRange(0, 100)
+                axis_xz.setTickCount(5)
+                axis_xz.setTickInterval(25)
+                axis_xz.setTickAnchor(0)
+                axis_xz.setTickType(QValueAxis.TicksDynamic)
+                axis_xz.setLabelsFont(QFont("Arial", 8))
+                axis_yz.setTitleText("Spectral Power (dB)")
+                axis_yz.setTitleVisible(True)
+                axis_yz.setLabelsVisible(True)
+                axis_yz.setGridLineVisible(True)
+                axis_yz.setRange(-50, 20)
+            chart_full.update()
+            chart_zoom.update()
+        # Update the left legend area (legend_group/legend_layout)
+        legend_layout = getattr(self.feature_widget, 'legend_layout', None)
+        if legend_layout is not None:
+            while legend_layout.count():
+                item = legend_layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+            # Only show legend entries for types that were actually plotted
+            for t in selected_types:
+                if t in plotted_types:
+                    pattern, label, color = type_to_pattern[t]
+                    legend_label = QLabel()
+                    legend_label.setFont(self.create_font('label'))
+                    legend_label.setText(f"<span style='color: {color.name()}'>{label}</span>")
+                    legend_layout.addWidget(legend_label)
+
+    def show_tooltip(self, event, chart_view):
+        """Show tooltip with frequency and power spectral density values"""
+        chart = chart_view.chart()
+        if not chart:
+            return
+
+        # Convert mouse position to chart coordinates
+        pos = chart_view.mapToScene(event.pos())
+        chart_pos = chart.mapFromScene(pos)
+
+        # Get axes
+        axis_x = chart.axes(Qt.Horizontal)[0]
+        axis_y = chart.axes(Qt.Vertical)[0]
+
+        # Get axis ranges
+        x_min = axis_x.min()
+        x_max = axis_x.max()
+        y_min = axis_y.min()
+        y_max = axis_y.max()
+
+        # Get plot area geometry
+        plot_area = chart.plotArea()
+        left = plot_area.left()
+        right = plot_area.right()
+        top = plot_area.top()
+        bottom = plot_area.bottom()
+
+        # Map pixel to axis value
+        if right - left == 0 or bottom - top == 0:
+            return
+        freq = x_min + (x_max - x_min) * (chart_pos.x() - left) / (right - left)
+        psd = y_max - (y_max - y_min) * (chart_pos.y() - top) / (bottom - top)
+
+        # Format tooltip text
+        tooltip = f"Frequency: {freq:.1f} Hz\nPSD: {psd:.1f} dB/Hz"
+
+        # Show tooltip
+        QToolTip.showText(event.globalPos(), tooltip, chart_view) 

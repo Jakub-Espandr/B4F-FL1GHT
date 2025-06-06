@@ -1,3 +1,8 @@
+"""
+This file is part of a project licensed under the Non-Commercial Public License (NCPL).
+See LICENSE file or contact the authors for full terms.
+"""
+
 import numpy as np
 import pandas as pd
 from utils.config import DATA_CONFIG
