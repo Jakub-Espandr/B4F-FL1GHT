@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QFont
 from PySide6.QtCore import Qt, QMargins
 from PySide6.QtCharts import QChart
-from ui.widgets import FeatureSelectionWidget, ControlWidget, SpectralAnalyzerWidget
+from ui.widgets import FeatureSelectionWidget, ControlWidget, SpectralAnalyzerWidget, StepResponseWidget
 from .chart_manager import ChartManager
 from utils.data_processor import normalize_time_data, get_clean_name, decimate_data
 from utils.config import FONT_CONFIG
@@ -28,6 +28,7 @@ class FL1GHTViewer(QWidget):
         
         # Initialize components
         self.chart_manager = ChartManager()
+        self.current_file = None
         self.setup_ui()
         self.setup_connections()
         
@@ -95,9 +96,13 @@ class FL1GHTViewer(QWidget):
         # Spectral analyzer tab
         self.spectral_widget = SpectralAnalyzerWidget(self.feature_widget)
         
+        # Step response tab
+        self.step_response_widget = StepResponseWidget(self.feature_widget)
+        
         # Add tabs
         self.tab_widget.addTab(time_domain_widget, "Time Domain")
         self.tab_widget.addTab(self.spectral_widget, "Spectral Analysis")
+        self.tab_widget.addTab(self.step_response_widget, "Step Response")
         
         right_layout.addWidget(self.tab_widget)
         main_layout.addWidget(right_widget, stretch=1)
@@ -133,6 +138,26 @@ class FL1GHTViewer(QWidget):
         if not file_path:
             return
             
+        # Store the current file path
+        self.current_file = file_path
+        
+        # --- NEW: Parse PID values from .bbl header ---
+        pid_vals = {'roll': None, 'pitch': None, 'yaw': None}
+        try:
+            with open(file_path, 'r', encoding='latin-1', errors='ignore') as f:
+                for i, line in enumerate(f):
+                    if 'rollPID:' in line:
+                        pid_vals['roll'] = line.split('rollPID:')[1].strip().split()[0]
+                    if 'pitchPID:' in line:
+                        pid_vals['pitch'] = line.split('pitchPID:')[1].strip().split()[0]
+                    if 'yawPID:' in line:
+                        pid_vals['yaw'] = line.split('yawPID:')[1].strip().split()[0]
+                    if i > 100:
+                        break
+            print(f"[DEBUG] Parsed PID values from .bbl: {pid_vals}")
+        except Exception as e:
+            print(f"[DEBUG] Could not parse PID from .bbl: {e}")
+        
         try:
             # Get the path to the blackbox decoder tool
             decoder_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "tools", "blackbox_decode")
@@ -152,12 +177,25 @@ class FL1GHTViewer(QWidget):
             with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as temp_file:
                 temp_file.write(result.stdout)
                 temp_file_path = temp_file.name
-            
+
+            # DEBUG: Print the first 20 lines of the CSV (header)
+            print("[DEBUG] First 20 lines of CSV header:")
+            with open(temp_file_path, 'r') as f:
+                for i, line in enumerate(f):
+                    print(line.strip())
+                    if i >= 19:
+                        break
+
             # Load the CSV data
             self.df = pd.read_csv(temp_file_path)
-            
-            # Clean up the temporary file
-            os.unlink(temp_file_path)
+
+            # Inject PID values as columns if found
+            if pid_vals['roll']:
+                self.df['rollPID'] = pid_vals['roll']
+            if pid_vals['pitch']:
+                self.df['pitchPID'] = pid_vals['pitch']
+            if pid_vals['yaw']:
+                self.df['yawPID'] = pid_vals['yaw']
             
             # Strip leading/trailing spaces from all column names
             self.df.columns = self.df.columns.str.strip()
@@ -199,13 +237,13 @@ class FL1GHTViewer(QWidget):
             return
 
     def plot_selected(self):
-        if not hasattr(self, "df") or self.df.empty:
+        if not hasattr(self, 'df') or self.df is None:
             QMessageBox.warning(self, "Warning", "Please load a data file first.")
             return
 
         # Only plot for the active tab
         current_tab = self.tab_widget.currentIndex()
-        # 0 = Time Domain, 1 = Spectral Analysis
+        # 0 = Time Domain, 1 = Spectral Analysis, 2 = Step Response
         if current_tab == 0:
             try:
                 self.control_widget.progress_bar.setVisible(True)
@@ -324,6 +362,9 @@ class FL1GHTViewer(QWidget):
         elif current_tab == 1:
             # Only update the spectral analyzer
             self.spectral_widget.update_spectrum(self.df)
+        elif current_tab == 2:
+            # Update step response analysis
+            self.step_response_widget.update_step_response(self.df)
 
     def update_spectral_analysis(self):
         """Update the spectral analysis when inputs change"""
@@ -385,11 +426,26 @@ class FL1GHTViewer(QWidget):
         self.feature_widget.rc_checkbox.setChecked(False)
         self.feature_widget.motor_checkbox.setChecked(False)
 
+    def set_step_response_defaults(self):
+        # Select gyro filtered and RC command for step response analysis
+        self.feature_widget.throttle_checkbox.setChecked(False)
+        self.feature_widget.gyro_scaled_checkbox.setChecked(True)
+        self.feature_widget.gyro_unfilt_checkbox.setChecked(False)
+        self.feature_widget.pid_p_checkbox.setChecked(False)
+        self.feature_widget.pid_i_checkbox.setChecked(False)
+        self.feature_widget.pid_d_checkbox.setChecked(False)
+        self.feature_widget.setpoint_checkbox.setChecked(False)
+        self.feature_widget.rc_checkbox.setChecked(True)
+        self.feature_widget.motor_checkbox.setChecked(False)
+
     def on_tab_changed(self, index):
-        # 0 = Time Domain, 1 = Spectral Analysis
+        # 0 = Time Domain, 1 = Spectral Analysis, 2 = Step Response
         if index == 0:
             self.feature_widget.set_time_domain_mode(True)
             self.set_time_domain_defaults()
-        else:
+        elif index == 1:
             self.feature_widget.set_time_domain_mode(False)
-            self.set_spectral_defaults() 
+            self.set_spectral_defaults()
+        elif index == 2:
+            self.feature_widget.set_time_domain_mode(False)
+            self.set_step_response_defaults() 
