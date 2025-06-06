@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+
+## [0.2.0] - 2025-06-07
+
+### Added
+- Spectral Analyzer tab with power spectral density (PSD) plots for Roll, Pitch, and Yaw axes
+- Dual-plot layout for each axis: full frequency range and zoomed-in 0–100 Hz view
+- Interactive tooltips showing frequency and PSD values on hover
+- Smoothing (window size) control for spectral analysis
+
+### Improved
+- Active tab highlighting
+- Frequency axis ticks and label formatting for better readability
+- UI layout adjustments for clarity
+- Legend improvements
+
+### Fixed
+- Time axis normalization and display in seconds
+- Symmetric y-axis scaling for time domain plots
+- Various import and plotting bugs
+
 ## [0.1.0] - 2025-06-06
 
 ### Added
@@ -33,4 +53,4 @@ All notable changes to this project will be documented in this file.
 - Memory optimization for large log files
 - Smooth rendering of large datasets
 - Proper handling of different time formats
-- Accurate data scaling and normalization 
+- Accurate data scaling and normalization

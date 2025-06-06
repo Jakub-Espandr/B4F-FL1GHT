@@ -1,3 +1,8 @@
+"""
+This file is part of a project licensed under the Non-Commercial Public License (NCPL).
+See LICENSE file or contact the authors for full terms.
+"""
+
 from PySide6.QtWidgets import QSizePolicy
 from PySide6.QtCharts import QChart, QChartView, QLineSeries, QLegend
 from PySide6.QtGui import QPainter, QFont, QColor
@@ -80,6 +85,9 @@ class ChartManager:
         axis_x.setLabelsVisible(True)
         axis_x.setGridLineVisible(True)
         axis_x.setRange(time_min, time_max)
+        rounded_max = ((int(time_max) + 4) // 5) * 5
+        axis_x.setRange(time_min, rounded_max)
+        axis_x.setTickCount(int((rounded_max - time_min) / 5) + 1)
         
         # Format the y-axis
         axis_y.setTitleText("Value")
@@ -127,10 +135,12 @@ class ChartManager:
         """Reset zoom level for all charts"""
         if self.full_time_range:
             time_min, time_max = self.full_time_range
+            rounded_max = ((int(time_max) + 4) // 5) * 5
             for chart_view in self.chart_views:
                 if chart_view.chart() and chart_view.chart().axes(Qt.Horizontal):
                     axes = chart_view.chart().axes(Qt.Horizontal)
                     if axes:
                         axis = axes[0]
-                        axis.setRange(time_min, time_max)
+                        axis.setRange(time_min, rounded_max)
+                        axis.setTickCount(int((rounded_max - time_min) / 5) + 1)
                         chart_view.chart().update() 
