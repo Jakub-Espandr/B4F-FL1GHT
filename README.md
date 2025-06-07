@@ -6,34 +6,28 @@ A modern, feature-rich blackbox log viewer for FPV drone flight data analysis. D
 
 ## ✨ Features
 
-- **Multi-Chart Display**: View Roll, Pitch, Yaw, and Throttle data simultaneously  
-- **Spectral Analyzer**: Analyze power spectral density (PSD) for Roll, Pitch, and Yaw axes  
-  - Dual plots for each axis: full frequency range and zoomed-in 0–100 Hz view  
-  - Interactive tooltips show frequency and PSD values on hover  
-  - Adjustable smoothing (window size) for spectral analysis
-- **Frequency Analyzer**: Advanced noise analysis with heatmap visualization
-  - Six-panel layout showing noise analysis for Roll, Pitch, and Yaw axes
-  - Logarithmic frequency scaling for better noise analysis
-  - Proper colorbar placement and styling
-  - Data normalization and smoothing
-- **Step Response Analysis**: Visualize step response for Roll, Pitch, and Yaw axes using native QtCharts  
-  - Vertically stacked plots for each axis, matching the Spectral Analyzer layout  
-  - Interactive tooltips show time (ms) and response value on hover  
-  - Annotation box displays max response and response time for each axis  
-  - Bold, black horizontal reference line at y=1.0 for easy comparison  
-- **Interactive Controls**:
-  - Zoom and pan with the mouse  
-  - Selectable data types (gyro, PID, RC, etc.)  
-  - Adjustable smoothing and resolution  
-  - Customizable axis ticks and improved tab highlighting
-- **Data Categories**:  
-  - Gyro (raw, unfiltered, scaled)  
-  - PID controller terms (P, I, D)  
-  - RC commands  
-  - Motor outputs
-- **Responsive and Lightweight**:  
-  - Built with PySide6  
-  - Fast rendering with efficient memory usage  
+- **Time Domain Analyzer**
+  - View Roll, Pitch, Yaw, Throttle adn much more simultaneously in time
+- **Spectral Analyzer**
+  - Power spectral density (PSD) for Roll, Pitch, and Yaw
+  - Dual plots: full range and 0–100 Hz zoom
+  - Interactive tooltips and adjustable smoothing
+- **Step Response Analysis**
+  - Visualize step response for all axes
+  - Interactive tooltips and annotation box
+- **Frequency Analyzer**
+  - Advanced noise analysis with heatmap visualization
+  - Six-panel layout for Roll, Pitch, Yaw (filtered/raw/D-Term)
+  - Logarithmic frequency scaling and data normalization
+- **Export Plots**
+  - One-click export of all plots as 1200 DPI JPEG images
+  - Stacked layout, detailed headers, and timestamped filenames
+  - Antialiased, publication-quality output
+- **Interactive Controls**
+  - Zoom, pan, and select data types
+  - Customizable smoothing, resolution, and axis ticks
+- **Responsive and Lightweight**
+  - Built with PySide6 for fast, efficient rendering
   - Minimal dependencies
 
 ---

@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.1] - 2025-06-08
+
+### Added
+- Plot Export feature:
+  - New "Export Plots" tab for automatic export of current plots
+  - One-click export with no additional configuration needed
+  - Stacks all plots from the current tab into a single ultra-high-resolution JPEG image
+  - Detailed two-line header with log name, date and tab-specific settings:
+    - Time Domain: Line width and zoom level
+    - Spectral Analysis: Smoothing window size
+    - Frequency Analysis: Gain setting
+  - Publication-quality 1200 DPI resolution for maximum detail
+  - 3x higher resolution than screen display for exceptional clarity
+  - Maximum-quality JPEG format (99% quality) for optimal image fidelity
+  - Antialiased rendering with enhanced quality settings
+  - Maintains original layout with plots arranged vertically
+  - Timestamped filenames for easy organization
+  - "Return to Previous Tab" functionality
+
+  ---
+
 ## [0.4.0] - 2025-06-07
 
 ### Added

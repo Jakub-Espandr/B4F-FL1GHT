@@ -385,7 +385,7 @@ def generate_individual_noise_figures(df, max_freq=1000, gain=1.0):
                 norm=colors.LogNorm(vmin=1, vmax=gyro_result['max']+1),
                 cmap='inferno'
             )
-            ax_gyro.set_title(f'Gyro {axis_name}', color='black', loc='left', pad=5)
+            ax_gyro.set_title(f'Gyro (filtered) {axis_name}', color='black', loc='left', pad=5)
             ax_gyro.set_ylabel('Frequency (Hz)', color='black')
             ax_gyro.set_xlabel('Throttle (%)', color='black')
             ax_gyro.set_ylim(0, max_freq)
@@ -421,7 +421,7 @@ def generate_individual_noise_figures(df, max_freq=1000, gain=1.0):
                 norm=colors.LogNorm(vmin=1, vmax=debug_result['max']+1),
                 cmap='inferno'
             )
-            ax_debug.set_title(f'Debug {axis_name}', color='black', loc='left', pad=5)
+            ax_debug.set_title(f'Gyro (raw) {axis_name}', color='black', loc='left', pad=5)
             ax_debug.set_ylabel('Frequency (Hz)', color='black')
             ax_debug.set_xlabel('Throttle (%)', color='black')
             ax_debug.set_ylim(0, max_freq)
@@ -507,7 +507,7 @@ def generate_individual_noise_figures(df, max_freq=1000, gain=1.0):
     fig = plt.figure(figsize=(22, 20))
     fig.patch.set_facecolor('white')
     # Further adjust spacing to completely eliminate the black bar at top
-    gs = gridspec.GridSpec(3, 3, wspace=0.2, hspace=0.3, top=0.94, bottom=0.01, left=0.08, right=0.95)
+    gs = gridspec.GridSpec(3, 3, wspace=0.2, hspace=0.3, top=0.94, bottom=0.13, left=0.08, right=0.95)
     axes = []
     all_pcs = []
     vmax_list = []
@@ -541,14 +541,22 @@ def generate_individual_noise_figures(df, max_freq=1000, gain=1.0):
             for spine in ax.spines.values():
                 spine.set_color('black')
             # Set title inside the plot to avoid black space
-            ax.set_title(title, color='black', fontsize=10, pad=5, loc='left')
+            if j == 0:
+                plot_title = f'Gyro (filtered) {axis_name}'
+            elif j == 1:
+                plot_title = f'Gyro (raw) {axis_name}'
+            else:
+                plot_title = f'D-Term {axis_name}'
+            ax.set_title(plot_title, color='black', fontsize=10, pad=5, loc='left')
             axes.append(ax)
 
     # Add a single shared colorbar at the bottom
     if all_pcs:
         vmax_global = max(vmax_list)
+        # Add a dedicated axis for the colorbar below the grid
+        cbar_ax = fig.add_axes([0.15, 0.06, 0.7, 0.025])  # [left, bottom, width, height] in figure coordinates
         cbar = fig.colorbar(
-            all_pcs[0], ax=axes, orientation='horizontal', fraction=0.03, pad=0.08,
+            all_pcs[0], cax=cbar_ax, orientation='horizontal',
             norm=colors.LogNorm(vmin=1, vmax=vmax_global), cmap='inferno'
         )
         # Remove ticks and labels

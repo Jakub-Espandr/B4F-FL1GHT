@@ -64,11 +64,10 @@ class ChartManager:
             # Create a zero reference line
             zero_line = QLineSeries()
             zero_line.setName("Zero")
-            
-            # Set color to black with 1px width
+            # Set color to black with 1px width (always fixed)
             pen = zero_line.pen()
             pen.setColor(QColor(0, 0, 0))  # Black
-            pen.setWidthF(1.0)  # 1px width
+            pen.setWidthF(1.0)  # Always 1px width for reference line
             zero_line.setPen(pen)
             
             # Add two points to create a horizontal line across the chart
@@ -96,7 +95,7 @@ class ChartManager:
 
             pen = series.pen()
             pen.setColor(color)
-            pen.setWidthF(line_width)
+            pen.setWidthF(line_width)  # Only user data series get the custom line width
             series.setPen(pen)
 
             for t, v in zip(data['time'], data['values']):

@@ -1,0 +1,3 @@
+this is default directory for exported plots
+
+it can be changed in settings

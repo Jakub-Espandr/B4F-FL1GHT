@@ -13,10 +13,10 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QMessageBox, QSizePolicy,
     QFileDialog, QTabWidget
 )
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QPainter
 from PySide6.QtCore import Qt, QMargins
 from PySide6.QtCharts import QChart
-from ui.widgets import FeatureSelectionWidget, ControlWidget, SpectralAnalyzerWidget, StepResponseWidget, FrequencyAnalyzerWidget
+from ui.widgets import FeatureSelectionWidget, ControlWidget, SpectralAnalyzerWidget, StepResponseWidget, FrequencyAnalyzerWidget, PlotExportWidget
 from .chart_manager import ChartManager
 from utils.data_processor import normalize_time_data, get_clean_name, decimate_data
 from utils.config import FONT_CONFIG
@@ -103,11 +103,15 @@ class FL1GHTViewer(QWidget):
         # Frequency analyzer tab
         self.frequency_analyzer_widget = FrequencyAnalyzerWidget(self.feature_widget)
         
+        # Export tab
+        self.export_widget = PlotExportWidget()
+        
         # Add tabs
         self.tab_widget.addTab(time_domain_widget, "Time Domain")
         self.tab_widget.addTab(self.spectral_widget, "Spectral Analysis")
         self.tab_widget.addTab(self.step_response_widget, "Step Response")
         self.tab_widget.addTab(self.frequency_analyzer_widget, "Frequency Analyzer")
+        self.tab_widget.addTab(self.export_widget, "Export Plots")
         
         right_layout.addWidget(self.tab_widget)
         main_layout.addWidget(right_widget, stretch=1)
@@ -281,7 +285,8 @@ class FL1GHTViewer(QWidget):
         elif current_tab == 2:
             # Step response tab
             # Update step response analysis
-            self.step_response_widget.update_step_response(self.df)
+            line_width = getattr(self.feature_widget, 'current_line_width', 1.0)
+            self.step_response_widget.update_step_response(self.df, line_width=line_width)
         elif current_tab == 3:
             # Frequency analyzer tab
             try:
@@ -402,7 +407,21 @@ class FL1GHTViewer(QWidget):
             self.feature_widget.throttle_checkbox.setChecked(True)
 
     def on_tab_changed(self, index):
-        # 0 = Time Domain, 1 = Spectral Analysis, 2 = Step Response, 3 = Frequency Analyzer
+        # 0 = Time Domain, 1 = Spectral Analysis, 2 = Step Response, 3 = Frequency Analyzer, 4 = Export
+        
+        # Store previous tab index when switching to export tab
+        if index == 4:  # Export tab
+            # Store the previous tab index (we need to look at the previously active tab)
+            previous_index = getattr(self, '_previous_tab_index', 0)
+            # Set it in the export widget
+            if hasattr(self, 'export_widget'):
+                self.export_widget.set_previous_tab(previous_index)
+                self.export_widget.export_plots()
+            return
+        
+        # Remember the current tab index for the next tab change
+        self._previous_tab_index = index
+        
         if index == 0:
             self.set_time_domain_defaults()
             self.feature_widget.set_time_domain_mode(True)

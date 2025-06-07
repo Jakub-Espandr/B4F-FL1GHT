@@ -6,9 +6,10 @@ See LICENSE file or contact the authors for full terms.
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFileDialog,
     QCheckBox, QLabel, QMessageBox, QGroupBox, QScrollArea,
-    QSlider, QProgressBar, QSizePolicy, QComboBox, QToolTip, QGridLayout, QSpinBox
+    QSlider, QProgressBar, QSizePolicy, QComboBox, QToolTip, QGridLayout, QSpinBox,
+    QDialog, QLineEdit
 )
-from PySide6.QtGui import QFont, QColor, QPainter, QPen
+from PySide6.QtGui import QFont, QColor, QPainter, QPen, QIcon
 from PySide6.QtCore import Qt, QMargins, QTimer
 from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis, QAreaSeries, QCategoryAxis
 from utils.config import FONT_CONFIG, COLOR_PALETTE, MOTOR_COLORS
@@ -25,12 +26,38 @@ from scipy import signal
 from scipy.ndimage import gaussian_filter1d
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from utils.pid_analyzer_noise import plot_all_noise_from_df, plot_noise_from_df, generate_individual_noise_figures
+import sys
+import json
 
 class FeatureSelectionWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.update_timer = None
         self.current_line_width = 1.0  # Default line width (stored here)
+        self.author_name = ""  # Default author name
+        self.drone_name = ""  # Default drone name
+        self.use_drone_in_filename = False
+        # Set default export directory to app_dir/export
+        app_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+        default_export_dir = os.path.join(app_dir, "export")
+        self.export_dir = default_export_dir
+        # Try to load settings from config/settings.json
+        config_dir = os.path.join(app_dir, "config")
+        config_path = os.path.join(config_dir, "settings.json")
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r") as f:
+                    data = json.load(f)
+                    self.author_name = data.get("author_name", self.author_name)
+                    loaded_export_dir = data.get("export_dir", self.export_dir)
+                    if not loaded_export_dir:
+                        self.export_dir = default_export_dir
+                    else:
+                        self.export_dir = loaded_export_dir
+                    self.drone_name = data.get("drone_name", self.drone_name)
+                    self.use_drone_in_filename = data.get("use_drone_in_filename", self.use_drone_in_filename)
+            except Exception as e:
+                print(f"[Settings] Failed to load config: {e}")
         self.setup_ui()
 
     def setup_ui(self):
@@ -124,33 +151,31 @@ class FeatureSelectionWidget(QWidget):
         self.legend_group.setLayout(self.legend_layout)
         layout.addWidget(self.legend_group)
 
-        # Add line width controls under the legend
-        line_width_group = QGroupBox("Line Width")
-        line_width_group.setFont(self.create_font('sub_group'))
-        line_width_layout = QVBoxLayout()
-        line_width_layout.setSpacing(10)  # Restore original spacing
-        line_width_layout.setContentsMargins(10, 10, 10, 10)  # Restore original margins
-        
-        # Create horizontal layout for slider and label
-        slider_layout = QHBoxLayout()
-        slider_layout.setSpacing(10)  # Restore original spacing
-        
+        # Add line width label above the slider/settings row
+        self.line_width_label = QLabel("Line Width: 1.0px")
+        self.line_width_label.setFont(self.create_font('label'))
+        layout.addWidget(self.line_width_label)
+        # Add line width controls (slider and settings button in one row, no group box)
+        slider_row = QHBoxLayout()
+        slider_row.setSpacing(10)
         self.line_width_slider = QSlider(Qt.Horizontal)
         self.line_width_slider.setMinimum(2)  # 1.0 * 2
         self.line_width_slider.setMaximum(4)  # 2.0 * 2
         self.line_width_slider.setValue(2)    # 1.0 * 2
         self.line_width_slider.setTickPosition(QSlider.NoTicks)
+        self.line_width_slider.setFixedWidth(100)  # Make slider more narrow
         self.line_width_slider.valueChanged.connect(self.line_width_changed)
-        slider_layout.addWidget(self.line_width_slider)
-        
-        self.line_width_label = QLabel("1.0px")
-        self.line_width_label.setMinimumWidth(40)
-        self.line_width_label.setFont(self.create_font('label'))
-        slider_layout.addWidget(self.line_width_label)
-        
-        line_width_layout.addLayout(slider_layout)
-        line_width_group.setLayout(line_width_layout)
-        layout.addWidget(line_width_group)
+        slider_row.addWidget(self.line_width_slider)
+        # Settings button as emoji
+        self.settings_button = QPushButton('⚙️')
+        self.settings_button.setToolTip('Settings')
+        self.settings_button.setFixedSize(40, 40)
+        font = self.settings_button.font()
+        font.setPointSize(20)
+        self.settings_button.setFont(font)
+        self.settings_button.clicked.connect(self.open_settings_dialog)
+        slider_row.addWidget(self.settings_button)
+        layout.addLayout(slider_row)
 
     def create_gyro_group(self):
         self.gyro_group = QGroupBox("Gyro Data")
@@ -323,12 +348,30 @@ class FeatureSelectionWidget(QWidget):
             for chart_view in parent.chart_manager.chart_views:
                 if chart_view.chart():
                     for series in chart_view.chart().series():
+                        # Skip the zero reference line (black line at y=0)
+                        if series.name() == "Zero" or series.pen().color() == Qt.black:
+                            continue
                         pen = series.pen()
                         pen.setWidthF(line_width)  # Use setWidthF for floating point width
                         series.setPen(pen)
                     chart_view.chart().update()
         
-        self.line_width_label.setText(f"{line_width:.1f}px")
+        # Also update Step Response plot if that tab is active
+        if parent and hasattr(parent, 'tab_widget') and hasattr(parent, 'step_response_widget'):
+            if parent.tab_widget.currentIndex() == 2:
+                # Update line width for existing series without recreating the plot
+                for chart_view in parent.step_response_widget.chart_views:
+                    if chart_view.chart():
+                        for series in chart_view.chart().series():
+                            # Skip the reference line (black line at y=1.0)
+                            if series.name() == "Zero" or series.pen().color() == Qt.black:
+                                continue
+                            pen = series.pen()
+                            pen.setWidthF(line_width)
+                            series.setPen(pen)
+                        chart_view.chart().update()
+        
+        self.line_width_label.setText(f"Line Width: {line_width:.1f}px")
 
     def notify_spectral_update(self, _):
         parent = self.parent()
@@ -396,6 +439,91 @@ class FeatureSelectionWidget(QWidget):
                 pass
         # Do NOT reconnect stateChanged to notify_parent_update in time domain mode
         # Only the Show Plot button will trigger plot updates
+
+    def open_settings_dialog(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Settings")
+        dialog.resize(420, 220)  # Make the dialog wider and taller
+        layout = QVBoxLayout(dialog)
+
+        # Author name
+        author_label = QLabel("Author Name:")
+        author_edit = QLineEdit()
+        author_edit.setText(self.author_name)
+        layout.addWidget(author_label)
+        layout.addWidget(author_edit)
+
+        # Drone name
+        drone_label = QLabel("Drone Name:")
+        drone_edit = QLineEdit()
+        drone_edit.setText(self.drone_name)
+        layout.addWidget(drone_label)
+        layout.addWidget(drone_edit)
+
+        # Checkbox for using drone in filename
+        drone_checkbox = QCheckBox("Include drone name in export filename")
+        drone_checkbox.setChecked(self.use_drone_in_filename)
+        layout.addWidget(drone_checkbox)
+
+        # Export directory
+        dir_label = QLabel("Export Directory:")
+        dir_edit = QLineEdit()
+        dir_edit.setText(self.export_dir)
+        browse_btn = QPushButton("Browse...")
+        def browse_dir():
+            dir_path = QFileDialog.getExistingDirectory(self, "Select Export Directory", self.export_dir)
+            if dir_path:
+                dir_edit.setText(dir_path)
+        browse_btn.clicked.connect(browse_dir)
+        dir_layout = QHBoxLayout()
+        dir_layout.addWidget(dir_edit)
+        dir_layout.addWidget(browse_btn)
+        layout.addWidget(dir_label)
+        layout.addLayout(dir_layout)
+
+        # Save/Cancel buttons
+        btn_layout = QHBoxLayout()
+        save_btn = QPushButton("Save")
+        cancel_btn = QPushButton("Cancel")
+        btn_layout.addWidget(save_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+
+        def save_settings():
+            self.author_name = author_edit.text()
+            self.export_dir = dir_edit.text()
+            self.drone_name = drone_edit.text()
+            self.use_drone_in_filename = drone_checkbox.isChecked()
+            # Save to config/settings.json
+            app_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+            config_dir = os.path.join(app_dir, "config")
+            if not os.path.exists(config_dir):
+                os.makedirs(config_dir)
+            config_path = os.path.join(config_dir, "settings.json")
+            try:
+                with open(config_path, "w") as f:
+                    json.dump({
+                        "author_name": self.author_name,
+                        "export_dir": self.export_dir,
+                        "drone_name": self.drone_name,
+                        "use_drone_in_filename": self.use_drone_in_filename
+                    }, f, indent=2)
+            except Exception as e:
+                print(f"[Settings] Failed to save config: {e}")
+            dialog.accept()
+        save_btn.clicked.connect(save_settings)
+        cancel_btn.clicked.connect(dialog.reject)
+
+        dialog.exec()
+
+    def _get_drone_name(self, parent):
+        if hasattr(parent, 'feature_widget') and hasattr(parent.feature_widget, 'drone_name'):
+            return parent.feature_widget.drone_name
+        return ""
+    def _use_drone_in_filename(self, parent):
+        if hasattr(parent, 'feature_widget') and hasattr(parent.feature_widget, 'use_drone_in_filename'):
+            return parent.feature_widget.use_drone_in_filename
+        return False
 
 class ControlWidget(QWidget):
     def __init__(self, parent=None):
@@ -843,7 +971,7 @@ class StepResponseWidget(QWidget):
             charts_layout.addWidget(chart_view)
         layout.addWidget(self.charts_container)
 
-    def update_step_response(self, df):
+    def update_step_response(self, df, line_width=None):
         if df is None or df.empty:
             print('[StepResponseWidget] DataFrame is empty or None.')
             return
@@ -857,7 +985,7 @@ class StepResponseWidget(QWidget):
         if parent and hasattr(parent, 'current_file') and parent.current_file:
             log_name = os.path.basename(parent.current_file)
         for i, axis_name in enumerate(axes_names):
-            chart_view = self.chart_views[i]
+            chart_view = self.charts_container.layout().itemAt(i).widget() if hasattr(self, 'charts_container') else self.chart_views[i]
             chart = chart_view.chart()
             chart.removeAllSeries()
             chart.legend().setVisible(False)  # Hide legend
@@ -950,7 +1078,7 @@ class StepResponseWidget(QWidget):
                 series.setName(f"{log_name}")
                 pen = series.pen()
                 pen.setColor(color)
-                pen.setWidthF(1.5)
+                pen.setWidthF(line_width if line_width is not None else 1.5)
                 series.setPen(pen)
                 chart.addSeries(series)
                 series.attachAxis(axis_x)
@@ -1251,3 +1379,559 @@ class FrequencyAnalyzerWidget(QWidget):
         if FONT_CONFIG[font_type]['weight'] == 'bold':
             font.setBold(True)
         return font 
+
+class PlotExportWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setup_ui()
+        self.export_path = "/Users/jakubespandr/Desktop"
+        self.previous_tab_index = 0  # Default to Time Domain
+        
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(10, 10, 10, 10)
+        
+        # Create info label
+        info_label = QLabel("This tab exports the previously viewed plots to your desktop.")
+        info_label.setAlignment(Qt.AlignCenter)
+        info_label.setFont(self.create_font('title'))
+        layout.addWidget(info_label)
+        
+        # Create status label
+        self.status_label = QLabel("")
+        self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.setFont(self.create_font('label'))
+        layout.addWidget(self.status_label)
+        
+        # Create return button
+        self.return_button = QPushButton("Return to Previous Tab")
+        self.return_button.setFont(self.create_font('button'))
+        self.return_button.clicked.connect(self.return_to_previous_tab)
+        layout.addWidget(self.return_button)
+        
+        # Add stretch to push everything to the top
+        layout.addStretch(1)
+    
+    def create_font(self, font_type):
+        font = QFont(FONT_CONFIG[font_type]['family'])
+        font.setPointSize(FONT_CONFIG[font_type]['size'])
+        if FONT_CONFIG[font_type]['weight'] == 'bold':
+            font.setBold(True)
+        return font
+    
+    def set_previous_tab(self, tab_index):
+        """Set the previous tab index to return to"""
+        self.previous_tab_index = tab_index
+    
+    def return_to_previous_tab(self):
+        """Return to the previous tab"""
+        parent = self.parent()
+        while parent is not None and not hasattr(parent, 'tab_widget'):
+            parent = parent.parent()
+        
+        if parent and hasattr(parent, 'tab_widget'):
+            parent.tab_widget.setCurrentIndex(self.previous_tab_index)
+    
+    def export_plots(self):
+        self.status_label.setText("Exporting plots...")
+        
+        # Find the parent FL1GHTViewer to access the tab widget
+        parent = self.parent()
+        while parent is not None and not hasattr(parent, 'tab_widget'):
+            parent = parent.parent()
+        
+        if not parent or not hasattr(parent, 'tab_widget'):
+            self.status_label.setText("Error: Could not find parent viewer.")
+            return
+        
+        # Export based on the previous tab
+        if self.previous_tab_index == 0:  # Time Domain
+            self._export_time_domain_plots(parent)
+        elif self.previous_tab_index == 1:  # Spectral Analysis
+            self._export_spectral_plots(parent)
+        elif self.previous_tab_index == 2:  # Step Response
+            self._export_step_response_plots(parent)
+        elif self.previous_tab_index == 3:  # Frequency Analyzer
+            self._export_frequency_analyzer_plots(parent)
+        else:
+            self.status_label.setText("Error: Unknown tab type.")
+    
+    def _get_export_dir(self, parent):
+        # Try to get export_dir from feature_widget
+        if hasattr(parent, 'feature_widget') and hasattr(parent.feature_widget, 'export_dir'):
+            return parent.feature_widget.export_dir
+        return self.export_path
+
+    def _get_author_name(self, parent):
+        if hasattr(parent, 'feature_widget') and hasattr(parent.feature_widget, 'author_name'):
+            return parent.feature_widget.author_name
+        return ""
+    
+    def _get_drone_name(self, parent):
+        if hasattr(parent, 'feature_widget') and hasattr(parent.feature_widget, 'drone_name'):
+            return parent.feature_widget.drone_name
+        return ""
+    def _use_drone_in_filename(self, parent):
+        if hasattr(parent, 'feature_widget') and hasattr(parent.feature_widget, 'use_drone_in_filename'):
+            return parent.feature_widget.use_drone_in_filename
+        return False
+    
+    def _export_time_domain_plots(self, parent):
+        try:
+            chart_views = parent.chart_manager.chart_views
+            if not chart_views:
+                self.status_label.setText("No Time Domain plots to export.")
+                return
+            # Use export_dir from settings
+            export_dir = self._get_export_dir(parent)
+            import os
+            if not os.path.exists(export_dir):
+                os.makedirs(export_dir)
+            # Generate timestamp for filenames
+            import datetime
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            current_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            log_name = os.path.basename(parent.current_file) if hasattr(parent, 'current_file') and parent.current_file else "LogFile"
+            log_name = os.path.splitext(log_name)[0]
+            drone_name = self._get_drone_name(parent)
+            drone_name_filename = drone_name.replace(' ', '_') if drone_name else ''
+            use_drone = self._use_drone_in_filename(parent)
+            # Stack plots into a single high-resolution image
+            from PySide6.QtGui import QImage, QPainter, QPixmap, QFont, QColor
+            from PySide6.QtCore import QSize, Qt, QRect
+            scale_factor = 3.0
+            header_height = int(100 * scale_factor)
+            width = int(chart_views[0].width() * scale_factor)
+            chart_height = int(sum(view.height() for view in chart_views) * scale_factor)
+            total_height = chart_height + header_height
+            combined_image = QImage(width, total_height, QImage.Format_ARGB32)
+            combined_image.fill(Qt.white)
+            painter = QPainter(combined_image)
+            try:
+                painter.setRenderHint(QPainter.Antialiasing, True)
+                painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+                author_name = self._get_author_name(parent)
+                header_font = QFont("fccTYPO", int(32 * scale_factor / 3.0))
+                header_font.setBold(True)
+                painter.setFont(header_font)
+                painter.setPen(QColor(0, 0, 0))
+                header_text = f"Log: {log_name} | Time Domain | Date: {current_date}"
+                if author_name:
+                    header_text += f" | Author: {author_name}"
+                if drone_name:
+                    header_text += f" | Drone: {drone_name}"
+                header_rect = QRect(0, 0, width, header_height)
+                painter.fillRect(header_rect, QColor(230, 230, 240))
+                painter.drawText(header_rect, Qt.AlignCenter | Qt.AlignTop, header_text)
+                settings_font = QFont("fccTYPO", int(28 * scale_factor / 3.0))
+                settings_font.setBold(True)
+                painter.setFont(settings_font)
+                settings_text = f"Line Width: {parent.feature_widget.current_line_width:.1f}px | Zoom: {1.0:.1f}x"
+                settings_rect = QRect(0, int(header_height/2), width, int(header_height/2))
+                painter.drawText(settings_rect, Qt.AlignCenter | Qt.AlignTop, settings_text)
+                # Legend drawing code ...
+                legend_items = []
+                legend_layout = getattr(parent.feature_widget, 'legend_layout', None)
+                if legend_layout is not None:
+                    for i in range(legend_layout.count()):
+                        item = legend_layout.itemAt(i)
+                        widget = item.widget()
+                        if widget:
+                            import re
+                            html = widget.text()
+                            match = re.search(r"color: ([^']+).*?>(.*?)<.*?>(.*)", html)
+                            if match:
+                                color = match.group(1)
+                                label = match.group(3)
+                                legend_items.append((color, label))
+                            else:
+                                legend_items.append(("#000000", widget.text()))
+                if legend_items:
+                    legend_font = QFont("fccTYPO", int(32 * scale_factor / 3.0))
+                    legend_font.setBold(False)
+                    painter.setFont(legend_font)
+                    y = int(header_height * 0.85)
+                    x = 40
+                    dot_radius = int(18 * scale_factor / 3.0)
+                    spacing = int(60 * scale_factor / 3.0)
+                    for color, label in legend_items:
+                        painter.setPen(QColor(color))
+                        painter.setBrush(QColor(color))
+                        painter.drawEllipse(x, y, dot_radius, dot_radius)
+                        painter.setPen(QColor(0, 0, 0))
+                        painter.drawText(x + dot_radius + 12, y + dot_radius, label)
+                        x += spacing + painter.fontMetrics().horizontalAdvance(label)
+                painter.setPen(QColor(180, 180, 180))
+                current_y = header_height
+                for chart_view in chart_views:
+                    original_size = chart_view.size()
+                    scaled_size = QSize(int(original_size.width() * scale_factor), int(original_size.height() * scale_factor))
+                    pixmap = QPixmap(scaled_size)
+                    pixmap.fill(Qt.white)
+                    temp_painter = QPainter(pixmap)
+                    temp_painter.setRenderHint(QPainter.Antialiasing, True)
+                    chart_view.render(temp_painter, target=pixmap.rect(), source=chart_view.rect())
+                    temp_painter.end()
+                    painter.drawPixmap(0, current_y, pixmap)
+                    current_y += pixmap.height()
+            finally:
+                painter.end()
+            if use_drone and drone_name:
+                filename = f"{drone_name_filename}-{log_name}-TimeDomain-{timestamp}.jpg"
+            else:
+                filename = f"{log_name}-TimeDomain-{timestamp}.jpg"
+            filepath = os.path.join(export_dir, filename)
+            combined_image.save(filepath, "JPG", quality=99)
+            self.status_label.setText(f"Exported ultra-high-resolution stacked Time Domain plots to {export_dir} as {filename}")
+        except Exception as e:
+            self.status_label.setText(f"Error exporting Time Domain plots: {str(e)}")
+    
+    def _export_spectral_plots(self, parent):
+        try:
+            spectral_widget = parent.spectral_widget
+            if not hasattr(spectral_widget, 'chart_views') or not spectral_widget.chart_views:
+                self.status_label.setText("No Spectral Analysis plots to export.")
+                return
+            export_dir = self._get_export_dir(parent)
+            import os
+            if not os.path.exists(export_dir):
+                os.makedirs(export_dir)
+            import datetime
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            current_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            log_name = os.path.basename(parent.current_file) if hasattr(parent, 'current_file') and parent.current_file else "LogFile"
+            log_name = os.path.splitext(log_name)[0]
+            drone_name = self._get_drone_name(parent)
+            drone_name_filename = drone_name.replace(' ', '_') if drone_name else ''
+            use_drone = self._use_drone_in_filename(parent)
+            chart_pairs = spectral_widget.chart_views
+            row_height = max(full.height() for full, zoom in chart_pairs)
+            scale_factor = 3.0
+            header_height = int(100 * scale_factor)
+            chart_height = int(row_height * len(chart_pairs) * scale_factor)
+            row_width = chart_pairs[0][0].width() + chart_pairs[0][1].width()
+            width = int(row_width * scale_factor)
+            total_height = chart_height + header_height
+            from PySide6.QtGui import QImage, QPainter, QPixmap, QFont, QColor
+            from PySide6.QtCore import QSize, Qt, QRect
+            combined_image = QImage(width, total_height, QImage.Format_ARGB32)
+            combined_image.fill(Qt.white)
+            painter = QPainter(combined_image)
+            try:
+                painter.setRenderHint(QPainter.Antialiasing, True)
+                painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+                author_name = self._get_author_name(parent)
+                header_font = QFont("fccTYPO", int(32 * scale_factor / 3.0))
+                header_font.setBold(True)
+                painter.setFont(header_font)
+                painter.setPen(QColor(0, 0, 0))
+                header_text = f"Log: {log_name} | Spectral Analysis | Date: {current_date}"
+                if author_name:
+                    header_text += f" | Author: {author_name}"
+                if drone_name:
+                    header_text += f" | Drone: {drone_name}"
+                header_rect = QRect(0, 0, width, header_height)
+                painter.fillRect(header_rect, QColor(230, 230, 240))
+                painter.drawText(header_rect, Qt.AlignCenter | Qt.AlignTop, header_text)
+                settings_font = QFont("fccTYPO", int(28 * scale_factor / 3.0))
+                settings_font.setBold(True)
+                painter.setFont(settings_font)
+                settings_text = f"Smoothing Window Size: {spectral_widget.window_sizes[spectral_widget.window_size_slider.value()]}"
+                settings_rect = QRect(0, int(header_height/2), width, int(header_height/2))
+                painter.drawText(settings_rect, Qt.AlignCenter | Qt.AlignTop, settings_text)
+                legend_items = []
+                legend_layout = getattr(parent.feature_widget, 'legend_layout', None)
+                if legend_layout is not None:
+                    for i in range(legend_layout.count()):
+                        item = legend_layout.itemAt(i)
+                        widget = item.widget()
+                        if widget:
+                            import re
+                            html = widget.text()
+                            match = re.search(r"color: ([^']+).*?>(.*?)<.*?>(.*)", html)
+                            if match:
+                                color = match.group(1)
+                                label = match.group(3)
+                                legend_items.append((color, label))
+                            else:
+                                legend_items.append(("#000000", widget.text()))
+                if legend_items:
+                    legend_font = QFont("fccTYPO", int(32 * scale_factor / 3.0))
+                    legend_font.setBold(False)
+                    painter.setFont(legend_font)
+                    y = int(header_height * 0.85)
+                    x = 40
+                    dot_radius = int(18 * scale_factor / 3.0)
+                    spacing = int(60 * scale_factor / 3.0)
+                    for color, label in legend_items:
+                        painter.setPen(QColor(color))
+                        painter.setBrush(QColor(color))
+                        painter.drawEllipse(x, y, dot_radius, dot_radius)
+                        painter.setPen(QColor(0, 0, 0))
+                        painter.drawText(x + dot_radius + 12, y + dot_radius, label)
+                        x += spacing + painter.fontMetrics().horizontalAdvance(label)
+                painter.setPen(QColor(180, 180, 180))
+                current_y = header_height
+                for chart_view_full, chart_view_zoom in chart_pairs:
+                    full_width = int(chart_view_full.width() * scale_factor)
+                    full_height = int(chart_view_full.height() * scale_factor)
+                    zoom_width = int(chart_view_zoom.width() * scale_factor)
+                    zoom_height = int(chart_view_zoom.height() * scale_factor)
+                    full_pixmap = QPixmap(full_width, full_height)
+                    full_pixmap.fill(Qt.white)
+                    temp_painter = QPainter(full_pixmap)
+                    temp_painter.setRenderHint(QPainter.Antialiasing, True)
+                    chart_view_full.render(temp_painter, target=full_pixmap.rect(), source=chart_view_full.rect())
+                    temp_painter.end()
+                    zoom_pixmap = QPixmap(zoom_width, zoom_height)
+                    zoom_pixmap.fill(Qt.white)
+                    temp_painter = QPainter(zoom_pixmap)
+                    temp_painter.setRenderHint(QPainter.Antialiasing, True)
+                    chart_view_zoom.render(temp_painter, target=zoom_pixmap.rect(), source=chart_view_zoom.rect())
+                    temp_painter.end()
+                    painter.drawPixmap(0, current_y, full_pixmap)
+                    painter.drawPixmap(full_width, current_y, zoom_pixmap)
+                    current_y += max(full_height, zoom_height)
+            finally:
+                painter.end()
+            if use_drone and drone_name:
+                filename = f"{drone_name_filename}-{log_name}-SpectralAnalysis-{timestamp}.jpg"
+            else:
+                filename = f"{log_name}-SpectralAnalysis-{timestamp}.jpg"
+            filepath = os.path.join(export_dir, filename)
+            combined_image.save(filepath, "JPG", quality=99)
+            self.status_label.setText(f"Exported ultra-high-resolution stacked Spectral Analysis plots to {export_dir} as {filename}")
+        except Exception as e:
+            self.status_label.setText(f"Error exporting Spectral plots: {str(e)}")
+    
+    def _export_step_response_plots(self, parent):
+        try:
+            step_widget = parent.step_response_widget
+            if not hasattr(step_widget, 'chart_views') or not step_widget.chart_views:
+                self.status_label.setText("No Step Response plots to export.")
+                return
+            export_dir = self._get_export_dir(parent)
+            import os
+            if not os.path.exists(export_dir):
+                os.makedirs(export_dir)
+            import datetime
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            current_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            log_name = os.path.basename(parent.current_file) if hasattr(parent, 'current_file') and parent.current_file else "LogFile"
+            log_name = os.path.splitext(log_name)[0]
+            drone_name = self._get_drone_name(parent)
+            drone_name_filename = drone_name.replace(' ', '_') if drone_name else ''
+            use_drone = self._use_drone_in_filename(parent)
+            scale_factor = 3.0
+            header_height = int(100 * scale_factor)
+            chart_height = int(sum(view.height() for view in step_widget.chart_views) * scale_factor)
+            width = int(step_widget.chart_views[0].width() * scale_factor)
+            total_height = chart_height + header_height
+            from PySide6.QtGui import QImage, QPainter, QPixmap, QFont, QColor
+            from PySide6.QtCore import QSize, Qt, QRect
+            combined_image = QImage(width, total_height, QImage.Format_ARGB32)
+            combined_image.fill(Qt.white)
+            painter = QPainter(combined_image)
+            try:
+                painter.setRenderHint(QPainter.Antialiasing, True)
+                painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+                author_name = self._get_author_name(parent)
+                header_font = QFont("fccTYPO", int(32 * scale_factor / 3.0))
+                header_font.setBold(True)
+                painter.setFont(header_font)
+                painter.setPen(QColor(0, 0, 0))
+                header_text = f"Log: {log_name} | Step Response | Date: {current_date}"
+                if author_name:
+                    header_text += f" | Author: {author_name}"
+                if drone_name:
+                    header_text += f" | Drone: {drone_name}"
+                header_rect = QRect(0, 0, width, header_height)
+                painter.fillRect(header_rect, QColor(230, 230, 240))
+                painter.drawText(header_rect, Qt.AlignCenter | Qt.AlignTop, header_text)
+                pid_values = parent.pid_values if hasattr(parent, 'pid_values') else {}
+                pid_text = ""
+                if 'roll' in pid_values:
+                    pid_text = f"Roll PID: {pid_values['roll']}, Pitch PID: {pid_values['pitch']}, Yaw PID: {pid_values['yaw']}"
+                settings_font = QFont("fccTYPO", int(28 * scale_factor / 3.0))
+                settings_font.setBold(True)
+                painter.setFont(settings_font)
+                settings_rect = QRect(0, int(header_height/2), width, int(header_height/2))
+                painter.drawText(settings_rect, Qt.AlignCenter | Qt.AlignTop, pid_text)
+                painter.setPen(QColor(180, 180, 180))
+                current_y = header_height
+                for chart_view in step_widget.chart_views:
+                    chart_height = int(chart_view.height() * scale_factor)
+                    chart_width = int(chart_view.width() * scale_factor)
+                    pixmap = QPixmap(chart_width, chart_height)
+                    pixmap.fill(Qt.white)
+                    temp_painter = QPainter(pixmap)
+                    temp_painter.setRenderHint(QPainter.Antialiasing, True)
+                    chart_view.render(temp_painter, target=pixmap.rect(), source=chart_view.rect())
+                    temp_painter.end()
+                    painter.drawPixmap(0, current_y, pixmap)
+                    current_y += pixmap.height()
+            finally:
+                painter.end()
+            if use_drone and drone_name:
+                filename = f"{drone_name_filename}-{log_name}-StepResponse-{timestamp}.jpg"
+            else:
+                filename = f"{log_name}-StepResponse-{timestamp}.jpg"
+            filepath = os.path.join(export_dir, filename)
+            combined_image.save(filepath, "JPG", quality=99)
+            self.status_label.setText(f"Exported ultra-high-resolution stacked Step Response plots to {export_dir} as {filename}")
+        except Exception as e:
+            self.status_label.setText(f"Error exporting Step Response plots: {str(e)}")
+    
+    def _export_frequency_analyzer_plots(self, parent):
+        try:
+            freq_widget = parent.frequency_analyzer_widget
+            if not hasattr(freq_widget, 'canvas_list') or not freq_widget.canvas_list:
+                self.status_label.setText("No Frequency Analyzer plots to export.")
+                return
+            
+            # Create export directory if it doesn't exist
+            export_dir = self._get_export_dir(parent)
+            import os
+            if not os.path.exists(export_dir):
+                os.makedirs(export_dir)
+            
+            # Generate timestamp for filenames
+            import datetime
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            current_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            # Get log name (without extension)
+            log_name = os.path.basename(parent.current_file) if hasattr(parent, 'current_file') and parent.current_file else "LogFile"
+            log_name = os.path.splitext(log_name)[0]
+            drone_name = self._get_drone_name(parent)
+            drone_name_filename = drone_name.replace(' ', '_') if drone_name else ''
+            use_drone = self._use_drone_in_filename(parent)
+            
+            # For matplotlib figures, we need a different approach
+            # If it's a single figure with subplots, just save it directly at high resolution
+            if len(freq_widget.canvas_list) == 1 and hasattr(freq_widget.canvas_list[0], 'figure'):
+                fig = freq_widget.canvas_list[0].figure
+                if len(fig.axes) > 3:  # If it's a multi-axis figure
+                    # Set figure background color to match other exports
+                    fig.patch.set_facecolor('#E6E6F0')  # Same color as other exports
+                    
+                    # Resize figure to add more space at top
+                    fig.set_size_inches(fig.get_size_inches()[0], fig.get_size_inches()[1] * 1.3)  # Make figure 30% taller
+                    
+                    # Add title with info using fccTYPO font
+                    fig.suptitle(f"Log: {log_name} | Frequency Analysis | Date: {current_date}", 
+                               fontsize=9, y=0.98, fontfamily='fccTYPO', weight='bold')
+                    
+                    # Add gain text separately with smaller font
+                    fig.text(0.5, 0.95, f"Gain: {freq_widget.gain}x", 
+                           fontsize=8, fontfamily='fccTYPO', weight='bold', ha='center')
+                    
+                    # Add much more space above the plot
+                    fig.subplots_adjust(top=0.50)  # Increased space above plot significantly
+                    
+                    # Move colorbars down and add more space
+                    for ax in fig.axes:
+                        if hasattr(ax, 'get_label') and ax.get_label() == 'colorbar':
+                            # Get current position
+                            pos = ax.get_position()
+                            # Move down by 15% of the figure height
+                            ax.set_position([pos.x0, pos.y0 - 0.15, pos.width, pos.height])
+                    
+                    # Add more space at the bottom of the figure
+                    fig.subplots_adjust(bottom=0.2)  # Increased space at bottom
+                    
+                    if use_drone and drone_name:
+                        filename = f"{drone_name_filename}-{log_name}-FrequencyAnalyzer-{timestamp}.jpg"
+                    else:
+                        filename = f"{log_name}-FrequencyAnalyzer-{timestamp}.jpg"
+                    filepath = os.path.join(export_dir, filename)
+                    # Save at higher DPI for better resolution - no quality arg for matplotlib
+                    fig.savefig(filepath, dpi=1200, bbox_inches='tight', format='jpg')
+                    self.status_label.setText(f"Exported ultra-high-resolution combined Frequency Analyzer plot to {export_dir} as {filename}")
+                    # Clear and regenerate Frequency Analyzer plot
+                    freq_widget.clear_all_plots()
+                    if hasattr(freq_widget, 'df') and freq_widget.df is not None:
+                        freq_widget.update_frequency_plots(freq_widget.df, max_freq=1000)
+                    return
+            
+            # If we have multiple separate figures, stack them using matplotlib with high resolution
+            import matplotlib.pyplot as plt
+            import numpy as np
+            
+            # Get all figures from the canvases
+            figures = [canvas.figure for canvas in freq_widget.canvas_list if hasattr(canvas, 'figure')]
+            if not figures:
+                self.status_label.setText("No valid Frequency Analyzer plots to export.")
+                return
+                
+            # Create a new tall figure to stack all plots with higher resolution
+            n_plots = len(figures)
+            fig_height = 8 * n_plots  # 8 inches per plot (increased for better quality)
+            fig_width = 12  # Wider for better resolution
+            
+            # Get log name and gain value
+            log_name = os.path.basename(parent.current_file) if hasattr(parent, 'current_file') and parent.current_file else "Log File"
+            gain = freq_widget.gain
+            
+            fig, axes = plt.subplots(nrows=n_plots, figsize=(fig_width, fig_height), dpi=1200)
+            
+            # Add title with info
+            fig.suptitle(f"Log: {log_name} | Frequency Analysis | Date: {current_date} | Gain: {gain}x", 
+                       fontsize=32, y=0.99)
+            
+            if n_plots == 1:
+                axes = [axes]  # Make it a list if there's only one subplot
+            
+            # Define plot types and axis names for better labels
+            axis_names = ['Roll', 'Pitch', 'Yaw']
+            plot_types = ['Gyro', 'Debug', 'DTerm']
+            
+            # Copy content from each figure to the stacked figure
+            for i, (source_fig, ax) in enumerate(zip(figures, axes)):
+                # Calculate the axis and plot type based on index
+                axis_idx = i // 3
+                plot_type_idx = i % 3
+                
+                axis_name = axis_names[axis_idx] if axis_idx < len(axis_names) else f"Axis{axis_idx}"
+                plot_type = plot_types[plot_type_idx] if plot_type_idx < len(plot_types) else f"Type{plot_type_idx}"
+                
+                # Get the content from the source figure's first axis
+                if source_fig.axes:
+                    source_ax = source_fig.axes[0]
+                    
+                    # Copy all artists from the source axis to the target axis
+                    for artist in source_ax.get_children():
+                        if hasattr(artist, 'get_array') and hasattr(artist, 'get_cmap'):  # For pcolormesh
+                            data = artist.get_array()
+                            x = artist.get_offsets()[:, 0] if hasattr(artist, 'get_offsets') else np.linspace(0, 100, data.shape[1])
+                            y = artist.get_offsets()[:, 1] if hasattr(artist, 'get_offsets') else np.linspace(0, 1000, data.shape[0])
+                            
+                            # Create new pcolormesh
+                            pcm = ax.pcolormesh(x, y, data, cmap=artist.get_cmap(), norm=artist.norm)
+                    
+                    # Copy axis limits and labels
+                    ax.set_xlim(source_ax.get_xlim())
+                    ax.set_ylim(source_ax.get_ylim())
+                    ax.set_xlabel(source_ax.get_xlabel(), fontsize=22)  # Larger font
+                    ax.set_ylabel(source_ax.get_ylabel(), fontsize=22)  # Larger font
+                    ax.set_title(f"{axis_name} {plot_type}", fontsize=32)  # Larger font
+                    ax.grid(True, color='white', alpha=0.3)
+                    # Increase tick label size for better readability
+                    ax.tick_params(axis='both', labelsize=12)  # Larger font
+            
+            # Adjust layout and save at high resolution
+            plt.tight_layout(rect=[0, 0, 1, 0.97])  # Leave room for the title
+            if use_drone and drone_name:
+                filename = f"{drone_name_filename}-{log_name}-FrequencyAnalyzer-{timestamp}.jpg"
+            else:
+                filename = f"{log_name}-FrequencyAnalyzer-{timestamp}.jpg"
+            filepath = os.path.join(export_dir, filename)
+            # Save without quality arg (not supported by matplotlib)
+            plt.savefig(filepath, dpi=1200, bbox_inches='tight', format='jpg')
+            plt.close(fig)
+            
+            self.status_label.setText(f"Exported ultra-high-resolution stacked Frequency Analyzer plots to {export_dir} as {filename}")
+        except Exception as e:
+            import traceback
+            print(traceback.format_exc())
+            self.status_label.setText(f"Error exporting Frequency Analyzer plots: {str(e)}")
