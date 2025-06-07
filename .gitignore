@@ -18,6 +18,7 @@ Icon
 Network Trash Folder
 Temporary Items
 .apdisk
+*.zip
 
 # Python
 __pycache__/

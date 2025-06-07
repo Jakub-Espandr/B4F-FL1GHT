@@ -8,6 +8,7 @@ import subprocess
 import pandas as pd
 import glob
 import tempfile
+import numpy as np
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QMessageBox, QSizePolicy,
     QFileDialog, QTabWidget
@@ -15,7 +16,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QFont
 from PySide6.QtCore import Qt, QMargins
 from PySide6.QtCharts import QChart
-from ui.widgets import FeatureSelectionWidget, ControlWidget, SpectralAnalyzerWidget, StepResponseWidget
+from ui.widgets import FeatureSelectionWidget, ControlWidget, SpectralAnalyzerWidget, StepResponseWidget, FrequencyAnalyzerWidget
 from .chart_manager import ChartManager
 from utils.data_processor import normalize_time_data, get_clean_name, decimate_data
 from utils.config import FONT_CONFIG
@@ -99,10 +100,14 @@ class FL1GHTViewer(QWidget):
         # Step response tab
         self.step_response_widget = StepResponseWidget(self.feature_widget)
         
+        # Frequency analyzer tab
+        self.frequency_analyzer_widget = FrequencyAnalyzerWidget(self.feature_widget)
+        
         # Add tabs
         self.tab_widget.addTab(time_domain_widget, "Time Domain")
         self.tab_widget.addTab(self.spectral_widget, "Spectral Analysis")
         self.tab_widget.addTab(self.step_response_widget, "Step Response")
+        self.tab_widget.addTab(self.frequency_analyzer_widget, "Frequency Analyzer")
         
         right_layout.addWidget(self.tab_widget)
         main_layout.addWidget(right_widget, stretch=1)
@@ -223,12 +228,16 @@ class FL1GHTViewer(QWidget):
             # Update feature widget with dataframe
             self.feature_widget.df = self.df
             
-            # Update available features for spectral analysis
-            # Exclude time column from available features
-            # self.spectral_widget.update_inputs(available_features)  # No longer needed
-            
             # Update spectral analysis after loading data
             self.spectral_widget.update_spectrum(self.df)
+            
+            # Clear existing frequency analyzer plots but don't update with new data
+            # Let user click "Show Plot" button instead
+            self.frequency_analyzer_widget.clear_all_plots()
+            
+            # If we're on the Time Domain tab, update the plot
+            if self.tab_widget.currentIndex() == 0:
+                self.plot_selected()
             
             QMessageBox.information(self, "Success", f"Successfully loaded: {os.path.basename(file_path)}")
                 
@@ -243,128 +252,63 @@ class FL1GHTViewer(QWidget):
 
         # Only plot for the active tab
         current_tab = self.tab_widget.currentIndex()
-        # 0 = Time Domain, 1 = Spectral Analysis, 2 = Step Response
+        # 0 = Time Domain, 1 = Spectral Analysis, 2 = Step Response, 3 = Frequency Analyzer
         if current_tab == 0:
             try:
                 self.control_widget.progress_bar.setVisible(True)
                 self.control_widget.progress_bar.setValue(0)
-                # Existing time domain plotting code
-                current_line_width = self.feature_widget.line_width_slider.value() / 2.0
-                for chart_view in self.chart_manager.chart_views:
-                    if chart_view.chart():
-                        for series in chart_view.chart().series():
-                            chart_view.chart().removeSeries(series)
-                            series.deleteLater()
-                        new_chart = QChart()
-                        new_chart.setTitle(chart_view.chart().title())
-                        new_chart.setAnimationOptions(QChart.NoAnimation)
-                        new_chart.setTheme(QChart.ChartThemeLight)
-                        new_chart.setMargins(QMargins(10, 10, 10, 10))
-                        new_chart.legend().setVisible(False)
-                        chart_view.setChart(new_chart)
+                
+                # Get selected features from the feature widget
                 selected_features = self.feature_widget.get_selected_features()
                 if not selected_features:
-                    QMessageBox.warning(self, "Warning", "Please select at least one data column.")
+                    QMessageBox.warning(self, "Warning", "Please select at least one feature to plot.")
+                    self.control_widget.progress_bar.setVisible(False)
                     return
-                time_min = 0.0
-                time_max = float(self.chart_manager.actual_time_max)
-                margin = time_max * 0.02
-                self.chart_manager.full_time_range = (time_min, time_max + margin)
-                series_by_category = {}
-                axis_names = ['Roll', 'Pitch', 'Yaw', 'Throttle']
-                # --- Begin: Compute global min/max for Roll, Pitch, Yaw ---
-                global_min = None
-                global_max = None
-                axis_feature_values = [[], [], []]  # For Roll, Pitch, Yaw
-                for axis in range(3):
-                    axis_features = [f for f in selected_features if f'[{axis}]' in f and not f.lower().startswith('motor[')]
-                    for feature in axis_features:
-                        if feature in self.df.columns:
-                            _, value_data = decimate_data(
-                                self.df['time'].values,
-                                self.df[feature].values
-                            )
-                            axis_feature_values[axis].append(value_data)
-                # Flatten and compute global min/max
-                all_values = []
-                for axis_vals in axis_feature_values:
-                    for arr in axis_vals:
-                        all_values.extend(arr)
-                if all_values:
-                    min_val = min(all_values)
-                    max_val = max(all_values)
-                    abs_max = max(abs(min_val), abs(max_val))
-                    symmetric_min = -abs_max
-                    symmetric_max = abs_max
-                else:
-                    symmetric_min = None
-                    symmetric_max = None
-                # --- End: Compute global min/max for Roll, Pitch, Yaw ---
-                for axis in range(4):
-                    if axis < 3:
-                        axis_features = [f for f in selected_features if f'[{axis}]' in f and not f.lower().startswith('motor[')]
-                    else:
-                        axis_features = [f for f in selected_features if any(name in f.lower() for name in ['throttle', 'rc[3]', 'rc3', 'rc_command[3]', 'rccommand[3]'])]
-                        axis_features += [f for f in selected_features if f.lower().startswith('motor[')]
-                    if not axis_features:
-                        continue
-                    series_data = []
-                    for feature in axis_features:
-                        if feature in self.df.columns:
-                            time_data, value_data = decimate_data(
-                                self.df['time'].values,
-                                self.df[feature].values
-                            )
-                            clean_name = get_clean_name(feature)
-                            series_data.append({
-                                'name': clean_name,
-                                'time': time_data,
-                                'values': value_data
-                            })
-                    if axis < 3:
-                        self.chart_manager.update_chart(
-                            self.chart_manager.chart_views[axis],
-                            series_data,
-                            time_min,
-                            time_max,
-                            symmetric_min,
-                            symmetric_max,
-                            line_width=current_line_width
-                        )
-                    else:
-                        has_motors = any(f.lower().startswith('motor[') for f in axis_features)
-                        has_throttle = any(name in f.lower() for f in axis_features for name in ['throttle', 'rc[3]', 'rc3', 'rc_command[3]', 'rccommand[3]'])
-                        if has_motors and has_throttle:
-                            y_range = (0, 2100)
-                        elif has_motors:
-                            y_range = (0, 2100)
-                        else:
-                            y_range = (995, 2005)
-                        self.chart_manager.update_chart(
-                            self.chart_manager.chart_views[axis],
-                            series_data,
-                            time_min,
-                            time_max,
-                            *y_range,
-                            line_width=current_line_width
-                        )
-                    for data in series_data:
-                        if data['name'] not in series_by_category:
-                            series_by_category[data['name']] = self.chart_manager.chart_views[axis].chart().series()[-1]
-                self.feature_widget.update_legend(series_by_category)
-                self.control_widget.zoom_slider.setValue(0)
-                self.control_widget.zoom_ratio_label.setText("1.0x")
+                
+                # Get the current line width from feature widget
+                line_width = getattr(self.feature_widget, 'current_line_width', 1.0)
+                
+                # Plot selected features with the current line width
+                self.chart_manager.plot_features(self.df, selected_features, self.control_widget.progress_bar, line_width=line_width)
                 self.control_widget.progress_bar.setValue(100)
+                self.control_widget.progress_bar.setVisible(False)
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Error during plotting:\n{e}")
-            finally:
+                QMessageBox.critical(self, "Error", f"Failed to plot data: {str(e)}")
                 self.control_widget.progress_bar.setVisible(False)
         elif current_tab == 1:
-            # Only update the spectral analyzer
-            self.spectral_widget.update_spectrum(self.df)
+            # Spectral analysis tab
+            self.update_spectral_analysis()
         elif current_tab == 2:
+            # Step response tab
             # Update step response analysis
             self.step_response_widget.update_step_response(self.df)
+        elif current_tab == 3:
+            # Frequency analyzer tab
+            try:
+                # Calculate the Nyquist frequency (half of the sampling rate)
+                time_data = self.df['time'].values.astype(float)
+                if time_data.max() > 1e6:
+                    time_data = time_data / 1_000_000.0
+                elif time_data.max() > 1e3:
+                    time_data = time_data / 1_000.0
+                time_data = time_data - time_data.min()
+                
+                # Calculate sampling rate and Nyquist frequency
+                dt = np.mean(np.diff(time_data))
+                fs = 1.0 / dt if dt > 0 else 0.0
+                nyquist_freq = fs / 2.0
+                
+                # Round up to the nearest 50Hz for cleaner display
+                max_freq = int(min(1000, nyquist_freq))
+                if max_freq % 50 != 0:
+                    max_freq = ((max_freq // 50) + 1) * 50
+                
+                # Force a complete refresh of the plots
+                self.frequency_analyzer_widget.clear_all_plots()
+                # Update with new data, using the calculated max frequency
+                self.frequency_analyzer_widget.update_frequency_plots(self.df, max_freq=max_freq)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to update frequency plots: {str(e)}")
 
     def update_spectral_analysis(self):
         """Update the spectral analysis when inputs change"""
@@ -438,14 +382,47 @@ class FL1GHTViewer(QWidget):
         self.feature_widget.rc_checkbox.setChecked(True)
         self.feature_widget.motor_checkbox.setChecked(False)
 
+    def set_frequency_analyzer_defaults(self):
+        # Select gyro filtered and unfiltered for frequency analysis
+        if hasattr(self.feature_widget, 'gyro_unfilt_checkbox'):
+            self.feature_widget.gyro_unfilt_checkbox.setChecked(True)
+        if hasattr(self.feature_widget, 'gyro_scaled_checkbox'):
+            self.feature_widget.gyro_scaled_checkbox.setChecked(True)
+        if hasattr(self.feature_widget, 'pid_p_checkbox'):
+            self.feature_widget.pid_p_checkbox.setChecked(False)
+        if hasattr(self.feature_widget, 'pid_i_checkbox'):
+            self.feature_widget.pid_i_checkbox.setChecked(False)
+        if hasattr(self.feature_widget, 'pid_d_checkbox'):
+            self.feature_widget.pid_d_checkbox.setChecked(False)
+        if hasattr(self.feature_widget, 'setpoint_checkbox'):
+            self.feature_widget.setpoint_checkbox.setChecked(False)
+        if hasattr(self.feature_widget, 'rc_checkbox'):
+            self.feature_widget.rc_checkbox.setChecked(False)
+        if hasattr(self.feature_widget, 'throttle_checkbox'):
+            self.feature_widget.throttle_checkbox.setChecked(True)
+
     def on_tab_changed(self, index):
-        # 0 = Time Domain, 1 = Spectral Analysis, 2 = Step Response
+        # 0 = Time Domain, 1 = Spectral Analysis, 2 = Step Response, 3 = Frequency Analyzer
         if index == 0:
-            self.feature_widget.set_time_domain_mode(True)
             self.set_time_domain_defaults()
+            self.feature_widget.set_time_domain_mode(True)
+            self.feature_widget.legend_group.setVisible(True)
+            # Update plot for time domain if we have data
+            if hasattr(self, 'df') and self.df is not None:
+                self.plot_selected()
         elif index == 1:
-            self.feature_widget.set_time_domain_mode(False)
             self.set_spectral_defaults()
+            self.feature_widget.set_time_domain_mode(True)
+            self.feature_widget.throttle_checkbox.setEnabled(False)
+            self.feature_widget.motor_checkbox.setEnabled(False)
+            self.feature_widget.legend_group.setVisible(True)
         elif index == 2:
+            self.set_step_response_defaults()
             self.feature_widget.set_time_domain_mode(False)
-            self.set_step_response_defaults() 
+            self.feature_widget.legend_group.setVisible(False)
+        elif index == 3:
+            self.set_frequency_analyzer_defaults()
+            self.feature_widget.set_time_domain_mode(False)
+            self.feature_widget.legend_group.setVisible(False)
+            # No longer auto-update frequency analyzer plots
+            # Let user click "Show Plot" button instead 

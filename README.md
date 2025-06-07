@@ -11,6 +11,11 @@ A modern, feature-rich blackbox log viewer for FPV drone flight data analysis. D
   - Dual plots for each axis: full frequency range and zoomed-in 0–100 Hz view  
   - Interactive tooltips show frequency and PSD values on hover  
   - Adjustable smoothing (window size) for spectral analysis
+- **Frequency Analyzer**: Advanced noise analysis with heatmap visualization
+  - Six-panel layout showing noise analysis for Roll, Pitch, and Yaw axes
+  - Logarithmic frequency scaling for better noise analysis
+  - Proper colorbar placement and styling
+  - Data normalization and smoothing
 - **Step Response Analysis**: Visualize step response for Roll, Pitch, and Yaw axes using native QtCharts  
   - Vertically stacked plots for each axis, matching the Spectral Analyzer layout  
   - Interactive tooltips show time (ms) and response value on hover  

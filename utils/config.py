@@ -104,7 +104,7 @@ CHART_CONFIG = {
 
 # Data processing configurations
 DATA_CONFIG = {
-    'max_points': 10000,  # Maximum points for decimation
+    'max_points': 4000,  # Maximum points for decimation (reduced for better performance)
     'time_column': 'time',  # Default time column name
     'time_scale': 1_000_000.0  # Convert microseconds to seconds
 } 

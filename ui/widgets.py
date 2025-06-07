@@ -6,23 +6,31 @@ See LICENSE file or contact the authors for full terms.
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFileDialog,
     QCheckBox, QLabel, QMessageBox, QGroupBox, QScrollArea,
-    QSlider, QProgressBar, QSizePolicy, QComboBox, QToolTip
+    QSlider, QProgressBar, QSizePolicy, QComboBox, QToolTip, QGridLayout, QSpinBox
 )
 from PySide6.QtGui import QFont, QColor, QPainter, QPen
-from PySide6.QtCore import Qt, QMargins
+from PySide6.QtCore import Qt, QMargins, QTimer
 from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis, QAreaSeries, QCategoryAxis
 from utils.config import FONT_CONFIG, COLOR_PALETTE, MOTOR_COLORS
 from utils.data_processor import get_clean_name
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_qtagg import FigureCanvas, NavigationToolbar2QT
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from utils.step_response import StepResponseCalculator
 from utils.step_trace import StepTrace
 import os
+import matplotlib.cm as cm
+from scipy import signal
+from scipy.ndimage import gaussian_filter1d
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from utils.pid_analyzer_noise import plot_all_noise_from_df, plot_noise_from_df, generate_individual_noise_figures
 
 class FeatureSelectionWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.update_timer = None
+        self.current_line_width = 1.0  # Default line width (stored here)
         self.setup_ui()
 
     def setup_ui(self):
@@ -109,6 +117,7 @@ class FeatureSelectionWidget(QWidget):
         # Add legend area at the bottom
         self.legend_group = QGroupBox("Plot Legend")
         self.legend_group.setFont(self.create_font('title'))
+        self.legend_group.setStyleSheet("QGroupBox { background-color: #444; border: none; }")
         self.legend_layout = QVBoxLayout()
         self.legend_layout.setSpacing(10)  # Restore original spacing
         self.legend_layout.setContentsMargins(10, 10, 10, 10)  # Restore original margins
@@ -230,7 +239,7 @@ class FeatureSelectionWidget(QWidget):
         if self.gyro_unfilt_checkbox.isChecked():
             selected_features.extend([col for col in self.df.columns if 'gyrounfilt' in col.lower()])
         if self.gyro_scaled_checkbox.isChecked():
-            selected_features.extend([col for col in self.df.columns if '(deg/s)' in col])
+            selected_features.extend([col for col in self.df.columns if 'gyroadc' in col.lower() and '(deg/s)' in col])
         
         # Handle PID data
         if self.pid_p_checkbox.isChecked():
@@ -248,7 +257,7 @@ class FeatureSelectionWidget(QWidget):
         
         # Handle RC data
         if self.rc_checkbox.isChecked():
-            selected_features.extend([col for col in self.df.columns if 'rccommand' in col.lower()])
+            selected_features.extend([col for col in self.df.columns if 'rccommand' in col.lower() and '[3]' not in col])
         
         # Handle Throttle data
         if self.throttle_checkbox.isChecked():
@@ -261,34 +270,52 @@ class FeatureSelectionWidget(QWidget):
         return selected_features
 
     def update_legend(self, series_by_category):
-        """Update legend items based on the series data"""
+        """Update legend items based on the series data (unique label per axis)."""
         # Clear existing legend items
         while self.legend_layout.count():
             item = self.legend_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
-        # Add new legend items
-        for clean_name, series in series_by_category.items():
-            legend_label = QLabel()
-            legend_label.setFont(self.create_font('label'))
-            
-            # Get color from COLOR_PALETTE or MOTOR_COLORS
-            if clean_name.startswith('Motor'):
-                # For motors, use the motor number to get a color
-                motor_num = int(clean_name.split(' ')[1])
-                color = QColor(*MOTOR_COLORS[motor_num % len(MOTOR_COLORS)])
+        # If empty, exit early
+        if not series_by_category:
+            return
+        
+        # Add new legend items (sorted alphabetically for consistent display)
+        for legend_label in sorted(series_by_category.keys()):
+            legend_label_widget = QLabel()
+            legend_label_widget.setFont(self.create_font('label'))
+
+            # Get color value
+            color_value = series_by_category[legend_label]
+            if isinstance(color_value, str) and color_value.startswith('#'):
+                # Already a color name (like "#ff0000")
+                color_name = color_value
             else:
-                # For other data types, use the predefined colors
-                color = QColor(*COLOR_PALETTE.get(clean_name, (128, 128, 128)))  # Default to gray if not found
-            
-            legend_label.setText(f"<span style='color: {color.name()}'>{clean_name}</span>")
-            self.legend_layout.addWidget(legend_label)
+                # Need to determine color from name
+                if legend_label.startswith('Motor'):
+                    try:
+                        motor_num = int(legend_label.split(' ')[1])
+                        color = QColor(*MOTOR_COLORS[motor_num % len(MOTOR_COLORS)])
+                    except Exception:
+                        color = QColor(*COLOR_PALETTE.get(legend_label, (128, 128, 128)))
+                else:
+                    color = QColor(*COLOR_PALETTE.get(legend_label, (128, 128, 128)))
+                color_name = color.name()
+
+            # Create a colored dot/square and the label text
+            legend_label_widget.setText(f"<span style='color: {color_name}'>●</span> {legend_label}")
+            # Remove any background color from the label
+            legend_label_widget.setStyleSheet("background: none;")
+            self.legend_layout.addWidget(legend_label_widget)
 
     def line_width_changed(self, value):
         """Update line width for all series in all charts"""
         # Convert slider value to actual line width (divide by 2)
         line_width = value / 2.0
+        
+        # Store current line width for later use
+        self.current_line_width = line_width
         
         # Get the parent FL1GHTViewer instance
         parent = self.parent()
@@ -310,11 +337,65 @@ class FeatureSelectionWidget(QWidget):
             parent = parent.parent() if hasattr(parent, 'parent') else None
         if parent and hasattr(parent, 'spectral_widget') and hasattr(parent, 'df'):
             parent.spectral_widget.update_spectrum(parent.df)
+            
+    def notify_parent_update(self, _):
+        """Notify parent (FL1GHTViewer) to update the plot with currently selected features"""
+        from PySide6.QtCore import QTimer
+        
+        # If we already have a pending update, don't schedule another one
+        if hasattr(self, 'update_timer') and self.update_timer is not None and self.update_timer.isActive():
+            return
+            
+        # Create a timer for delayed update
+        if not hasattr(self, 'update_timer') or self.update_timer is None:
+            self.update_timer = QTimer()
+            self.update_timer.setSingleShot(True)
+            self.update_timer.timeout.connect(self._do_update)
+            
+        # Start or restart the timer (300ms delay)
+        self.update_timer.start(300)
+    
+    def _do_update(self):
+        """Actually perform the update after the timer expires"""
+        parent = self.parent()
+        # Find the main viewer (FL1GHTViewer) in the parent chain
+        while parent is not None and not hasattr(parent, 'plot_selected'):
+            parent = parent.parent() if hasattr(parent, 'parent') else None
+        
+        # Check if we're in the Time Domain tab (index 0)
+        if parent and hasattr(parent, 'tab_widget') and parent.tab_widget.currentIndex() == 0:
+            # Call plot_selected to update the chart and legend
+            parent.plot_selected()
+
+    def uncheck_all_features(self):
+        for checkbox in [self.gyro_unfilt_checkbox, self.gyro_scaled_checkbox, 
+                         self.pid_p_checkbox, self.pid_i_checkbox, self.pid_d_checkbox,
+                         self.pid_f_checkbox, self.setpoint_checkbox, self.rc_checkbox,
+                         self.throttle_checkbox, self.motor_checkbox]:
+            checkbox.setChecked(False)
 
     def set_time_domain_mode(self, enabled: bool):
-        # Enable throttle and motor outputs only in time domain mode
-        self.throttle_checkbox.setEnabled(enabled)
-        self.motor_checkbox.setEnabled(enabled)
+        # List of all checkboxes
+        all_checkboxes = [self.gyro_unfilt_checkbox, self.gyro_scaled_checkbox, 
+                          self.pid_p_checkbox, self.pid_i_checkbox, self.pid_d_checkbox,
+                          self.pid_f_checkbox, self.setpoint_checkbox, self.rc_checkbox,
+                          self.throttle_checkbox, self.motor_checkbox]
+        if enabled:
+            for checkbox in all_checkboxes:
+                checkbox.setEnabled(True)
+            self.throttle_checkbox.setEnabled(True)
+            self.motor_checkbox.setEnabled(True)
+        else:
+            for checkbox in all_checkboxes:
+                checkbox.setEnabled(False)
+        # Disconnect all checkbox signals
+        for checkbox in all_checkboxes:
+            try:
+                checkbox.stateChanged.disconnect()
+            except:
+                pass
+        # Do NOT reconnect stateChanged to notify_parent_update in time domain mode
+        # Only the Show Plot button will trigger plot updates
 
 class ControlWidget(QWidget):
     def __init__(self, parent=None):
@@ -326,14 +407,15 @@ class ControlWidget(QWidget):
         layout.setSpacing(10)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # Progress bar
+        # Progress bar - hidden and not added to layout
         self.progress_bar = QProgressBar()
         self.progress_bar.setFont(self.create_font('label'))
         self.progress_bar.setVisible(False)
-        layout.addWidget(self.progress_bar)
+        # Not adding to layout: layout.addWidget(self.progress_bar)
 
         # Zoom controls
         zoom_layout = QHBoxLayout()
+        zoom_layout.setContentsMargins(10, 0, 10, 0)  # Add horizontal margins
         zoom_label = QLabel("Zoom:")
         zoom_label.setFont(self.create_font('label'))
         self.zoom_slider = QSlider(Qt.Horizontal)
@@ -354,6 +436,7 @@ class ControlWidget(QWidget):
 
         # Scroll controls
         scroll_layout = QHBoxLayout()
+        scroll_layout.setContentsMargins(10, 0, 10, 0)  # Add horizontal margins
         scroll_label = QLabel("Scroll:")
         scroll_label.setFont(self.create_font('label'))
         self.scroll_slider = QSlider(Qt.Horizontal)
@@ -386,7 +469,8 @@ class SpectralAnalyzerWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         # Smoothing setup controls
-        smoothing_group = QGroupBox("Smoothing Setup")
+        smoothing_group = QGroupBox()
+        smoothing_group.setStyleSheet("QGroupBox { border: none; }")
         smoothing_layout = QHBoxLayout()
         self.window_sizes = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768]
         self.window_size_slider = QSlider(Qt.Horizontal)
@@ -397,9 +481,13 @@ class SpectralAnalyzerWidget(QWidget):
         self.window_size_slider.setTickPosition(QSlider.TicksBelow)
         self.window_size_slider.setSingleStep(1)
         # Smoothing labels
-        smoothing_layout.addWidget(QLabel("Smoothing: Max"))
+        max_label = QLabel("Smoothing: Max")
+        max_label.setFont(self.create_font('label'))
+        min_label = QLabel("Smoothing: Min")
+        min_label.setFont(self.create_font('label'))
+        smoothing_layout.addWidget(max_label)
         smoothing_layout.addWidget(self.window_size_slider)
-        smoothing_layout.addWidget(QLabel("Smoothing: Min"))
+        smoothing_layout.addWidget(min_label)
         self.window_size_slider.valueChanged.connect(lambda _: self.update_spectrum(self.df))
         smoothing_group.setLayout(smoothing_layout)
         layout.addWidget(smoothing_group)
@@ -426,6 +514,7 @@ class SpectralAnalyzerWidget(QWidget):
             chart_view_full.setChart(chart_full)
             chart_view_full.setMouseTracking(True)
             chart_view_full.mouseMoveEvent = lambda event, cv=chart_view_full: self.show_tooltip(event, cv)
+            chart_view_full.setCursor(Qt.CrossCursor)  # Add crosshair cursor
             row_layout.addWidget(chart_view_full, stretch=3)  # Make full plot wider
             # Zoomed plot (0-100 Hz)
             chart_view_zoom = QChartView()
@@ -441,6 +530,7 @@ class SpectralAnalyzerWidget(QWidget):
             chart_view_zoom.setChart(chart_zoom)
             chart_view_zoom.setMouseTracking(True)
             chart_view_zoom.mouseMoveEvent = lambda event, cv=chart_view_zoom: self.show_tooltip(event, cv)
+            chart_view_zoom.setCursor(Qt.CrossCursor)  # Add crosshair cursor
             row_layout.addWidget(chart_view_zoom, stretch=1)  # Make zoomed plot narrower
             # Store both views as a tuple
             self.chart_views.append((chart_view_full, chart_view_zoom))
@@ -575,7 +665,9 @@ class SpectralAnalyzerWidget(QWidget):
                 axis_x.setTickInterval(50)
                 axis_x.setTickAnchor(0)
                 axis_x.setTickType(QValueAxis.TicksDynamic)
-                axis_x.setLabelsFont(QFont("Arial", 8))
+                small_font = self.create_font('label')
+                small_font.setPointSize(8)
+                axis_x.setLabelsFont(small_font)
                 axis_y.setTitleText("Spectral Power (dB)")
                 axis_y.setTitleVisible(True)
                 axis_y.setLabelsVisible(True)
@@ -597,7 +689,7 @@ class SpectralAnalyzerWidget(QWidget):
                 axis_xz.setTickInterval(25)
                 axis_xz.setTickAnchor(0)
                 axis_xz.setTickType(QValueAxis.TicksDynamic)
-                axis_xz.setLabelsFont(QFont("Arial", 8))
+                axis_xz.setLabelsFont(small_font)  # Using the same small FONT_CONFIG font
                 axis_yz.setTitleText("Spectral Power (dB)")
                 axis_yz.setTitleVisible(True)
                 axis_yz.setLabelsVisible(True)
@@ -618,47 +710,95 @@ class SpectralAnalyzerWidget(QWidget):
                     pattern, label, color = type_to_pattern[t]
                     legend_label = QLabel()
                     legend_label.setFont(self.create_font('label'))
-                    legend_label.setText(f"<span style='color: {color.name()}'>{label}</span>")
+                    legend_label.setText(f"<span style='color: {color.name()}'>●</span> {label}")
+                    legend_label.setStyleSheet("background: none;")
                     legend_layout.addWidget(legend_label)
 
     def show_tooltip(self, event, chart_view):
-        """Show tooltip with frequency and power spectral density values"""
         chart = chart_view.chart()
         if not chart:
             return
-
-        # Convert mouse position to chart coordinates
-        pos = chart_view.mapToScene(event.pos())
-        chart_pos = chart.mapFromScene(pos)
-
         # Get axes
-        axis_x = chart.axes(Qt.Horizontal)[0]
-        axis_y = chart.axes(Qt.Vertical)[0]
-
+        axes_x = chart.axes(Qt.Horizontal)
+        axes_y = chart.axes(Qt.Vertical)
+        if not axes_x or not axes_y:
+            return
+        axis_x = axes_x[0]
+        axis_y = axes_y[0]
         # Get axis ranges
         x_min = axis_x.min()
         x_max = axis_x.max()
         y_min = axis_y.min()
         y_max = axis_y.max()
-
         # Get plot area geometry
         plot_area = chart.plotArea()
         left = plot_area.left()
         right = plot_area.right()
         top = plot_area.top()
         bottom = plot_area.bottom()
-
         # Map pixel to axis value
         if right - left == 0 or bottom - top == 0:
             return
-        freq = x_min + (x_max - x_min) * (chart_pos.x() - left) / (right - left)
-        psd = y_max - (y_max - y_min) * (chart_pos.y() - top) / (bottom - top)
-
-        # Format tooltip text
-        tooltip = f"Frequency: {freq:.1f} Hz\nPSD: {psd:.1f} dB/Hz"
-
-        # Show tooltip
-        QToolTip.showText(event.globalPos(), tooltip, chart_view) 
+        freq_val = x_min + (x_max - x_min) * (event.position().x() - left) / (right - left)
+        
+        # Update all charts with the same frequency line
+        for full_view, zoom_view in self.chart_views:
+            for view in [full_view, zoom_view]:
+                view_chart = view.chart()
+                if not view_chart:
+                    continue
+                    
+                # Get plot area for this chart
+                view_plot_area = view_chart.plotArea()
+                view_left = view_plot_area.left()
+                view_right = view_plot_area.right()
+                view_top = view_plot_area.top()
+                view_bottom = view_plot_area.bottom()
+                
+                # Calculate X position in scene coordinates for this chart
+                view_x_scene = view.mapToScene(view.mapFromGlobal(event.globalPos())).x()
+                
+                # Draw or update vertical line
+                scene = view.scene()
+                if not hasattr(view, '_track_line'):
+                    from PySide6.QtWidgets import QGraphicsLineItem
+                    view._track_line = QGraphicsLineItem()
+                    view._track_line.setZValue(1000)
+                    pen = view._track_line.pen()
+                    pen.setColor(QColor(255, 0, 0, 128))
+                    pen.setWidth(1)
+                    view._track_line.setPen(pen)
+                    scene.addItem(view._track_line)
+                
+                # Show/hide line based on whether we're in the plot area
+                if view_left <= view_x_scene <= view_right:
+                    view._track_line.setLine(view_x_scene, view_top, view_x_scene, view_bottom)
+                    view._track_line.setVisible(True)
+                else:
+                    view._track_line.setVisible(False)
+        
+        # Get all series data at the current frequency point
+        tooltip_lines = [f"Frequency: {freq_val:.2f} Hz"]
+        all_series = chart.series()
+        for series in all_series:
+            # Find closest point to current frequency
+            closest_point = None
+            closest_dist = float('inf')
+            for i in range(series.count()):
+                point = series.at(i)
+                dist = abs(point.x() - freq_val)
+                if dist < closest_dist:
+                    closest_dist = dist
+                    closest_point = point
+            if closest_point and closest_dist < (x_max - x_min) / 100:  # Only show if reasonably close
+                name = series.name()
+                value = closest_point.y()
+                tooltip_lines.append(f"{name}: {value:.2f} dB")
+        tooltip = "\n".join(tooltip_lines)
+        if left <= event.position().x() <= right:
+            QToolTip.showText(event.globalPos(), tooltip, chart_view)
+        else:
+            QToolTip.hideText()
 
 class StepResponseWidget(QWidget):
     def __init__(self, feature_widget, parent=None):
@@ -666,6 +806,13 @@ class StepResponseWidget(QWidget):
         self.feature_widget = feature_widget
         self.df = None
         self.setup_ui()
+
+    def create_font(self, font_type):
+        font = QFont(FONT_CONFIG[font_type]['family'])
+        font.setPointSize(FONT_CONFIG[font_type]['size'])
+        if FONT_CONFIG[font_type]['weight'] == 'bold':
+            font.setBold(True)
+        return font
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -685,12 +832,13 @@ class StepResponseWidget(QWidget):
             title_font = QFont()
             title_font.setPointSize(10)
             chart.setTitleFont(title_font)
-            chart.legend().setVisible(True)
+            chart.legend().setVisible(False)  # Hide legend
             chart.setMargins(QMargins(10, 10, 10, 10))
             chart_view.setChart(chart)
             # Connect mouse move event for tooltips
             chart_view.setMouseTracking(True)
             chart_view.mouseMoveEvent = lambda event, cv=chart_view: self.show_tooltip(event, cv)
+            chart_view.setCursor(Qt.CrossCursor)  # Add crosshair cursor
             self.chart_views.append(chart_view)
             charts_layout.addWidget(chart_view)
         layout.addWidget(self.charts_container)
@@ -712,7 +860,7 @@ class StepResponseWidget(QWidget):
             chart_view = self.chart_views[i]
             chart = chart_view.chart()
             chart.removeAllSeries()
-            chart.legend().setVisible(True)
+            chart.legend().setVisible(False)  # Hide legend
             chart.setTitle(f"{axis_name.capitalize()} Step Response")
             # Remove all existing axes before adding new ones
             for axis in chart.axes():
@@ -728,6 +876,8 @@ class StepResponseWidget(QWidget):
             axis_x.setGridLineVisible(True)
             axis_x.setLinePenColor(Qt.black)
             axis_x.setLabelsColor(Qt.black)
+            axis_x.setTitleFont(self.create_font('label'))
+            axis_x.setLabelsFont(self.create_font('label'))
             # Use QCategoryAxis for Y axis to guarantee ticks at 0, 0.25, ..., 1.75
             axis_y = QCategoryAxis()
             axis_y.setTitleText('Response')
@@ -740,6 +890,8 @@ class StepResponseWidget(QWidget):
             axis_y.setGridLineVisible(True)
             axis_y.setLinePenColor(Qt.black)
             axis_y.setLabelsColor(Qt.black)
+            axis_y.setTitleFont(self.create_font('label'))
+            axis_y.setLabelsFont(self.create_font('label'))
             chart.addAxis(axis_x, Qt.AlignBottom)
             chart.addAxis(axis_y, Qt.AlignLeft)
             # Find columns
@@ -841,9 +993,6 @@ class StepResponseWidget(QWidget):
         chart = chart_view.chart()
         if not chart:
             return
-        # Convert mouse position to chart coordinates
-        pos = chart_view.mapToScene(event.pos())
-        chart_pos = chart.mapFromScene(pos)
         # Get axes
         axes_x = chart.axes(Qt.Horizontal)
         axes_y = chart.axes(Qt.Vertical)
@@ -865,9 +1014,240 @@ class StepResponseWidget(QWidget):
         # Map pixel to axis value
         if right - left == 0 or bottom - top == 0:
             return
-        t_ms = x_min + (x_max - x_min) * (chart_pos.x() - left) / (right - left)
-        y_val = y_max - (y_max - y_min) * (chart_pos.y() - top) / (bottom - top)
-        # Format tooltip text
-        tooltip = f"Time: {t_ms:.1f} ms\nValue: {y_val:.2f}"
-        # Show tooltip
-        QToolTip.showText(event.globalPos(), tooltip, chart_view) 
+        t_val = x_min + (x_max - x_min) * (event.position().x() - left) / (right - left)
+        
+        # Update all charts with the same time line
+        for view in self.chart_views:
+            view_chart = view.chart()
+            if not view_chart:
+                continue
+                
+            # Get plot area for this chart
+            view_plot_area = view_chart.plotArea()
+            view_left = view_plot_area.left()
+            view_right = view_plot_area.right()
+            view_top = view_plot_area.top()
+            view_bottom = view_plot_area.bottom()
+            
+            # Calculate X position in scene coordinates for this chart
+            view_x_scene = view.mapToScene(view.mapFromGlobal(event.globalPos())).x()
+            
+            # Draw or update vertical line
+            scene = view.scene()
+            if not hasattr(view, '_track_line'):
+                from PySide6.QtWidgets import QGraphicsLineItem
+                view._track_line = QGraphicsLineItem()
+                view._track_line.setZValue(1000)
+                pen = view._track_line.pen()
+                pen.setColor(QColor(255, 0, 0, 128))
+                pen.setWidth(1)
+                view._track_line.setPen(pen)
+                scene.addItem(view._track_line)
+            
+            # Show/hide line based on whether we're in the plot area
+            if view_left <= view_x_scene <= view_right:
+                view._track_line.setLine(view_x_scene, view_top, view_x_scene, view_bottom)
+                view._track_line.setVisible(True)
+            else:
+                view._track_line.setVisible(False)
+        
+        # Get all series data at the current time point
+        tooltip_lines = [f"Time: {t_val:.1f} ms"]
+        all_series = chart.series()
+        for series in all_series:
+            # Find closest point to current time
+            closest_point = None
+            closest_dist = float('inf')
+            for i in range(series.count()):
+                point = series.at(i)
+                dist = abs(point.x() - t_val)
+                if dist < closest_dist:
+                    closest_dist = dist
+                    closest_point = point
+            if closest_point and closest_dist < (x_max - x_min) / 100:  # Only show if reasonably close
+                name = series.name()
+                value = closest_point.y()
+                tooltip_lines.append(f"{name}: {value:.2f}")
+        tooltip = "\n".join(tooltip_lines)
+        if left <= event.position().x() <= right:
+            QToolTip.showText(event.globalPos(), tooltip, chart_view)
+        else:
+            QToolTip.hideText()
+
+class FrequencyAnalyzerWidget(QWidget):
+    def __init__(self, feature_widget, parent=None):
+        super().__init__(parent)
+        self.feature_widget = feature_widget
+        self.df = None
+        self.canvas = None
+        self.gain = 5.0  # Default gain value
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Add gain control slider
+        control_layout = QHBoxLayout()
+        control_layout.setContentsMargins(10, 0, 10, 0)  # Add horizontal margins
+        gain_label = QLabel("Gain:")
+        gain_label.setFont(self.create_font('label'))
+        self.gain_slider = QSlider(Qt.Horizontal)
+        self.gain_slider.setMinimum(1)  # Min gain 1x
+        self.gain_slider.setMaximum(50) # Max gain 50x
+        self.gain_slider.setValue(5)    # Default 5x
+        self.gain_slider.setTickInterval(5)
+        self.gain_slider.setTickPosition(QSlider.TicksBelow)
+        self.gain_value_label = QLabel(f"{self.gain}x")
+        self.gain_value_label.setFont(self.create_font('label'))
+        
+        self.gain_slider.valueChanged.connect(self.on_gain_changed)
+        
+        control_layout.addWidget(gain_label)
+        control_layout.addWidget(self.gain_slider)
+        control_layout.addWidget(self.gain_value_label)
+        
+        layout.addLayout(control_layout)
+        
+        self.plot_container = QWidget()
+        self.plot_layout = QGridLayout(self.plot_container)
+        self.plot_layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.plot_container)
+        layout.addStretch(1)  # Push everything up so gain slider stays at the top
+
+    def on_gain_changed(self, value):
+        self.gain = value
+        self.gain_value_label.setText(f"{self.gain}x")
+        # No longer automatically update plots when gain changes
+        # User needs to click "Show Plot" button to see the changes
+
+    def clear_all_plots(self):
+        # Remove all canvases from the layout
+        if hasattr(self, 'canvas_list'):
+            for canvas in self.canvas_list:
+                self.plot_layout.removeWidget(canvas)
+                canvas.setParent(None)
+                canvas.deleteLater()
+            self.canvas_list = []
+        else:
+            self.canvas_list = []
+        if self.canvas is not None:
+            self.plot_layout.removeWidget(self.canvas)
+            self.canvas.setParent(None)
+            self.canvas.deleteLater()
+            self.canvas = None
+
+    def update_frequency_plots(self, df, max_freq=1000):
+        if df is not None:
+            self.df = df
+        if self.df is None or self.df.empty:
+            print("[FrequencyAnalyzer] DataFrame is empty or None.")
+            return
+        # Debug: print columns and sample data
+        print("[FrequencyAnalyzer] DataFrame columns:", self.df.columns.tolist())
+        print("[FrequencyAnalyzer] DataFrame head:")
+        print(self.df.head())
+        
+        # Check for key columns
+        has_gyro = any('gyro' in col.lower() for col in self.df.columns)
+        has_debug = any('debug' in col.lower() for col in self.df.columns)
+        has_throttle = any('throttle' in col.lower() or 'rccommand[3]' in col.lower() for col in self.df.columns)
+        
+        print(f"[FrequencyAnalyzer] Has gyro: {has_gyro}, debug: {has_debug}, throttle: {has_throttle}")
+        print(f"[FrequencyAnalyzer] Using gain: {self.gain}x, max_freq: {max_freq}Hz")
+        
+        # Try to print gyro, debug, and throttle columns
+        for col in self.df.columns:
+            if 'gyro' in col.lower() or 'debug' in col.lower() or 'throttle' in col.lower() or 'rccommand[3]' in col.lower():
+                values = self.df[col].head().to_list()
+                if all(v == 0 for v in values):
+                    print(f"[FrequencyAnalyzer] WARNING: {col} has all zeros in first rows")
+                else:
+                    print(f"[FrequencyAnalyzer] Sample data for {col}:", values)
+        
+        self.clear_all_plots()
+        try:
+            figures = generate_individual_noise_figures(self.df, gain=self.gain, max_freq=max_freq)
+            self.canvas_list = []
+            # Arrange in 3x3 grid: rows=roll/pitch/yaw, cols=gyro/debug
+            for i, fig in enumerate(figures):
+                canvas = FigureCanvas(fig)
+                # Set cursor to crosshair for better precision
+                canvas.setCursor(Qt.CrossCursor)
+                row = i // 3
+                if i % 3 == 0:
+                    col = 0  # Gyro
+                elif i % 3 == 1:
+                    col = 1  # Debug
+                else:
+                    col = 2  # D-term
+                self.plot_layout.addWidget(canvas, row, col)
+                self.canvas_list.append(canvas)
+                # Add tooltip support
+                def make_motion_event_handler(canvas, fig):
+                    def on_motion(event):
+                        # Get figure dimensions
+                        fig_height = fig.get_figheight() * fig.dpi
+                        
+                        # If position is near the bottom of the figure (where colorbar is), hide tooltip
+                        # Colorbar is in the bottom ~5% of the figure
+                        if event.y < fig_height * 0.05:
+                            QToolTip.hideText()
+                            return
+                            
+                        # Hide tooltip if over colorbar or if no data coordinates
+                        if (event.inaxes is None or
+                            event.xdata is None or event.ydata is None or
+                            (hasattr(event.inaxes, 'get_label') and event.inaxes.get_label() == 'colorbar')):
+                            QToolTip.hideText()
+                            return
+                        
+                        x, y = event.xdata, event.ydata
+                        tooltip = f"Throttle: {x:.1f}%\nFrequency: {y:.1f} Hz"
+                        QToolTip.showText(canvas.mapToGlobal(event.guiEvent.pos()), tooltip, canvas)
+                    return on_motion
+
+                # Add statistics annotation to the plot
+                for ax in fig.axes:
+                    # Skip if this is a colorbar axis
+                    if ax.get_label() == 'colorbar':
+                        continue
+                    for artist in ax.get_children():
+                        if hasattr(artist, 'get_array') and hasattr(artist, 'get_facecolor'):  # QuadMesh
+                            arr = artist.get_array()
+                            if arr is not None and hasattr(arr, 'shape'):
+                                # Get frequency values from the plot
+                                y_lims = ax.get_ylim()
+                                y_data = np.linspace(y_lims[0], y_lims[1], arr.shape[0])
+                                
+                                # Create mask for frequencies above 15Hz
+                                freq_mask = y_data >= 15
+                                
+                                # Calculate statistics only for frequencies above 15Hz
+                                # Remove any padding/background values (1e-6)
+                                noise_values = arr[freq_mask][arr[freq_mask] > 1e-6]
+                                if len(noise_values) > 0:
+                                    mean_val = np.mean(noise_values)
+                                    peak_val = np.max(noise_values)
+                                    # Add text annotation
+                                    ax.text(0.98, 0.98, 
+                                           f"Mean: {mean_val:.2f}\nPeak: {peak_val:.2f}",
+                                           transform=ax.transAxes,
+                                           verticalalignment='top',
+                                           horizontalalignment='right',
+                                           color='white',
+                                           fontsize=9)
+                canvas.mpl_connect('motion_notify_event', make_motion_event_handler(canvas, fig))
+            print(f"[FrequencyAnalyzer] Individual plots generated successfully in 3x3 grid (max freq: {max_freq}Hz)")
+        except Exception as e:
+            import traceback
+            print(f"[FrequencyAnalyzer] Error plotting: {e}")
+            print(traceback.format_exc())
+
+    def create_font(self, font_type):
+        font = QFont(FONT_CONFIG[font_type]['family'])
+        font.setPointSize(FONT_CONFIG[font_type]['size'])
+        if FONT_CONFIG[font_type]['weight'] == 'bold':
+            font.setBold(True)
+        return font 

@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2025-06-07
+
+### Added
+- Frequency Analyzer tab with noise plots (heatmaps) for gyro data:
+  - Six-panel layout showing noise analysis for Roll, Pitch, and Yaw axes
+  - Logarithmic frequency scaling for better noise analysis
+  - Proper colorbar placement and styling
+  - Data normalization and smoothing
+
+### Improved
+- Major refactor and enhancement of `core/chart_manager.py`:
+  - Improved axis handling
+  - Added zero reference lines for Roll, Pitch, and Yaw charts
+  - Enhanced legend update logic
+  - Added interactive tooltips and crosshair cursor
+  - Improved data decimation for performance on large datasets
+  - Refactored code for maintainability and integration with feature widgets
+
+---
 
 ## [0.3.0] - 2025-06-06
 
