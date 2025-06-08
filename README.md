@@ -1,5 +1,13 @@
-# B4F: FL1GHT – Blackbox Log Viewer
+<p align="center">
+  <a href="https://i.imghippo.com/files/Dk2733PtA.png">
+    <img src="https://i.imghippo.com/files/Dk2733PtA.png" alt="B4F: FL1GHT Logo" width="250"/>
+  </a>
+</p>
 
+<h1 align="center">B4F: FL1GHT</h1>
+<p align="center"><em>(Born4Flight | FlyCamCzech)</em></p>
+
+## Overview
 A modern, feature-rich blackbox log viewer for FPV drone flight data analysis. Developed by **Born4Flight**, this application provides an intuitive interface for visualizing and analyzing flight data from Betaflight `.bbl` logs.
 
 ---
@@ -7,7 +15,7 @@ A modern, feature-rich blackbox log viewer for FPV drone flight data analysis. D
 ## ✨ Features
 
 - **Time Domain Analyzer**
-  - View Roll, Pitch, Yaw, Throttle adn much more simultaneously in time
+  - View Roll, Pitch, Yaw, Throttle and more simultaneously in time
 - **Spectral Analyzer**
   - Power spectral density (PSD) for Roll, Pitch, and Yaw
   - Dual plots: full range and 0–100 Hz zoom
@@ -119,5 +127,3 @@ See the [LICENSE](https://github.com/Jakub-Espandr/B4F-FL1GHT/raw/main/LICENSE) 
 ## 🙏 Acknowledgments
 
 - Built with ❤️ using PySide6 and open-source libraries
-
----
