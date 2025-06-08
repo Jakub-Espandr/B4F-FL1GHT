@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.3] - 2025-06-09
+
+### Added
+- Added multi-flight loading mechanism:
+  - Support for loading and selecting individual flights from multi-flight BBL files
+  - Flight selection dialog with duration and size information
+  - Support for selecting up to 5 flights in Step Response tab for comparison
+  - Support for selecting up to 2 flights in Spectral Analysis tab
+- Added automatic deselection of logs when switching between tabs
+- Added improved handling of spectral analysis checkbox selection
+- Added proper separation of spectral and step response log selection handlers
+
+### Improved
+- Enhanced signal handling for checkbox and log selection events
+- Improved error handling for signal disconnections
+- Better state management when switching between analysis modes
+
+### Fixed
+- Fixed spectral analysis checkbox selection to properly handle all checkboxes
+- Fixed step response mode to correctly handle 5-file limit
+- Fixed tab switching to maintain clean state between different analysis modes
+- Fixed signal disconnection warnings
+
+---
+
 ## [0.4.2] - 2025-06-08
 
 ### Added

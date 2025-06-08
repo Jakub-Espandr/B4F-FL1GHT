@@ -524,27 +524,118 @@ class FeatureSelectionWidget(QWidget):
             checkbox.setChecked(False)
 
     def set_time_domain_mode(self, enabled: bool):
+        """Set up time domain mode."""
         # List of all checkboxes
-        all_checkboxes = [self.gyro_unfilt_checkbox, self.gyro_scaled_checkbox, 
-                          self.pid_p_checkbox, self.pid_i_checkbox, self.pid_d_checkbox,
-                          self.pid_f_checkbox, self.setpoint_checkbox, self.rc_checkbox,
-                          self.throttle_checkbox, self.motor_checkbox]
-        if enabled:
-            for checkbox in all_checkboxes:
-                checkbox.setEnabled(True)
-            self.throttle_checkbox.setEnabled(True)
-            self.motor_checkbox.setEnabled(True)
-        else:
-            for checkbox in all_checkboxes:
-                checkbox.setEnabled(False)
-        # Disconnect all checkbox signals
+        all_checkboxes = [
+            self.gyro_unfilt_checkbox, self.gyro_scaled_checkbox,
+            self.pid_p_checkbox, self.pid_i_checkbox, self.pid_d_checkbox,
+            self.pid_f_checkbox, self.setpoint_checkbox, self.rc_checkbox,
+            self.throttle_checkbox, self.motor_checkbox
+        ]
+        
+        # Disconnect all checkbox signals first
         for checkbox in all_checkboxes:
             try:
                 checkbox.stateChanged.disconnect()
-            except TypeError:
+            except:
                 pass
-        # Do NOT reconnect stateChanged to notify_parent_update in time domain mode
-        # Only the Show Plot button will trigger plot updates
+        
+        if enabled:
+            # Enable all checkboxes
+            for checkbox in all_checkboxes:
+                checkbox.setEnabled(True)
+            
+            # Set single selection mode for logs list
+            self.logs_list.setSelectionMode(QListWidget.SingleSelection)
+            try:
+                self.logs_list.itemSelectionChanged.disconnect(self._handle_spectral_log_selection)
+                self.logs_list.itemSelectionChanged.disconnect(self._handle_step_response_log_selection)
+            except:
+                pass
+        else:
+            # Disable all checkboxes
+            for checkbox in all_checkboxes:
+                checkbox.setEnabled(False)
+
+    def _handle_spectral_checkbox(self, state):
+        """Handle checkbox state changes in spectral analysis mode"""
+        if not self.spectral_mode:
+            return
+            
+        # Count checked boxes
+        checked_count = sum(1 for checkbox in [
+            self.gyro_scaled_checkbox, self.gyro_unfilt_checkbox,
+            self.pid_p_checkbox, self.pid_i_checkbox, self.pid_d_checkbox,
+            self.pid_f_checkbox, self.setpoint_checkbox, self.rc_checkbox,
+            self.throttle_checkbox, self.motor_checkbox
+        ] if checkbox.isChecked())
+        
+        # If trying to check more than 3 boxes, uncheck the last one
+        if checked_count > 3:
+            # Find the sender checkbox
+            sender = self.sender()
+            if sender:
+                sender.setChecked(False)
+            QMessageBox.warning(self, "Warning", "You can only select up to 3 features for spectral analysis.")
+
+    def set_spectral_mode(self, enabled):
+        """Enable or disable spectral analysis mode"""
+        self.spectral_mode = enabled
+        
+        # Enable/disable spectral analysis checkboxes
+        self.gyro_scaled_checkbox.setEnabled(enabled)
+        self.gyro_unfilt_checkbox.setEnabled(enabled)
+        self.pid_p_checkbox.setEnabled(enabled)
+        self.pid_i_checkbox.setEnabled(enabled)
+        self.pid_d_checkbox.setEnabled(enabled)
+        self.pid_f_checkbox.setEnabled(enabled)
+        self.setpoint_checkbox.setEnabled(enabled)
+        self.rc_checkbox.setEnabled(enabled)
+        # Always disable Throttle and Motor in spectral mode
+        self.throttle_checkbox.setEnabled(False)
+        self.motor_checkbox.setEnabled(False)
+        
+        # Connect checkbox state changes to the handler
+        for checkbox in [self.gyro_scaled_checkbox, self.gyro_unfilt_checkbox, 
+                        self.pid_p_checkbox, self.pid_i_checkbox, self.pid_d_checkbox, 
+                        self.pid_f_checkbox, self.setpoint_checkbox, self.rc_checkbox, 
+                        self.throttle_checkbox, self.motor_checkbox]:
+            try:
+                checkbox.stateChanged.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            checkbox.stateChanged.connect(self._handle_spectral_checkbox)
+        
+        # Set selection mode for logs list
+        if enabled:
+            self.logs_list.setSelectionMode(QListWidget.MultiSelection)
+            # Connect selection change handler
+            try:
+                self.logs_list.itemSelectionChanged.disconnect(self._handle_step_response_log_selection)
+            except (TypeError, RuntimeError):
+                pass
+            try:
+                self.logs_list.itemSelectionChanged.disconnect(self._handle_spectral_log_selection)
+            except (TypeError, RuntimeError):
+                pass
+            self.logs_list.itemSelectionChanged.connect(self._handle_spectral_log_selection)
+        else:
+            self.logs_list.setSelectionMode(QListWidget.SingleSelection)
+            try:
+                self.logs_list.itemSelectionChanged.disconnect(self._handle_spectral_log_selection)
+            except (TypeError, RuntimeError):
+                pass
+
+    def _handle_spectral_log_selection(self):
+        """Handle log selection changes in spectral analysis mode"""
+        if not self.spectral_mode:
+            return
+            
+        selected_items = self.logs_list.selectedItems()
+        if len(selected_items) > 2:
+            # Unselect the last selected item
+            selected_items[-1].setSelected(False)
+            QMessageBox.warning(self, "Warning", "You can only select up to 2 flights for spectral analysis.")
 
     def open_settings_dialog(self):
         dialog = QDialog(self)
@@ -666,6 +757,53 @@ class FeatureSelectionWidget(QWidget):
                 # Update the feature widget with the new dataframe
                 if hasattr(self, 'feature_widget'):
                     self.feature_widget.df = self.df
+
+    def _handle_step_response_log_selection(self):
+        """Handle log selection changes in step response mode"""
+        if not hasattr(self, 'step_response_mode') or not self.step_response_mode:
+            return
+            
+        selected_items = self.logs_list.selectedItems()
+        if len(selected_items) > 5:
+            # Unselect the last selected item
+            selected_items[-1].setSelected(False)
+            QMessageBox.warning(self, "Warning", "You can only select up to 5 flights for step response analysis.")
+
+    def set_step_response_mode(self, enabled):
+        """Enable or disable step response mode"""
+        self.step_response_mode = enabled
+        
+        # Disable all checkboxes in step response mode
+        self.gyro_scaled_checkbox.setEnabled(False)
+        self.gyro_unfilt_checkbox.setEnabled(False)
+        self.pid_p_checkbox.setEnabled(False)
+        self.pid_i_checkbox.setEnabled(False)
+        self.pid_d_checkbox.setEnabled(False)
+        self.pid_f_checkbox.setEnabled(False)
+        self.setpoint_checkbox.setEnabled(False)
+        self.rc_checkbox.setEnabled(False)
+        self.throttle_checkbox.setEnabled(False)
+        self.motor_checkbox.setEnabled(False)
+        
+        # Set selection mode for logs list
+        if enabled:
+            self.logs_list.setSelectionMode(QListWidget.MultiSelection)
+            # Connect selection change handler
+            try:
+                self.logs_list.itemSelectionChanged.disconnect(self._handle_spectral_log_selection)
+            except (TypeError, RuntimeError):
+                pass
+            try:
+                self.logs_list.itemSelectionChanged.disconnect(self._handle_step_response_log_selection)
+            except (TypeError, RuntimeError):
+                pass
+            self.logs_list.itemSelectionChanged.connect(self._handle_step_response_log_selection)
+        else:
+            self.logs_list.setSelectionMode(QListWidget.SingleSelection)
+            try:
+                self.logs_list.itemSelectionChanged.disconnect(self._handle_step_response_log_selection)
+            except (TypeError, RuntimeError):
+                pass
 
 class ControlWidget(QWidget):
     def __init__(self, parent=None):
@@ -1671,6 +1809,21 @@ class PlotExportWidget(QWidget):
             return parent.feature_widget.use_drone_in_filename
         return False
     
+    def _get_current_log_name(self, parent):
+        """Get the name of the currently selected log."""
+        def clean_log_name(name):
+            # Remove .bbl or .BBL extension (case insensitive) and replace spaces with underscores
+            name = name.rsplit('.', 1)[0] if '.' in name else name
+            return name.replace(' ', '_')
+
+        if hasattr(parent, 'feature_widget'):
+            if hasattr(parent.feature_widget, 'selected_logs') and parent.feature_widget.selected_logs:
+                return clean_log_name(parent.feature_widget.selected_logs[0])
+            elif hasattr(parent.feature_widget, 'loaded_logs') and parent.feature_widget.loaded_logs:
+                # If no log is selected but we have loaded logs, use the first one
+                return clean_log_name(list(parent.feature_widget.loaded_logs.keys())[0])
+        return "LogFile"
+
     def _export_time_domain_plots(self, parent):
         try:
             chart_views = parent.chart_manager.chart_views
@@ -1686,8 +1839,7 @@ class PlotExportWidget(QWidget):
             import datetime
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             current_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            log_name = os.path.basename(parent.current_file) if hasattr(parent, 'current_file') and parent.current_file else "LogFile"
-            log_name = os.path.splitext(log_name)[0]
+            log_name = self._get_current_log_name(parent)
             drone_name = self._get_drone_name(parent)
             drone_name_filename = drone_name.replace(' ', '_') if drone_name else ''
             use_drone = self._use_drone_in_filename(parent)
@@ -1794,8 +1946,7 @@ class PlotExportWidget(QWidget):
             import datetime
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             current_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            log_name = os.path.basename(parent.current_file) if hasattr(parent, 'current_file') and parent.current_file else "LogFile"
-            log_name = os.path.splitext(log_name)[0]
+            log_name = self._get_current_log_name(parent)
             drone_name = self._get_drone_name(parent)
             drone_name_filename = drone_name.replace(' ', '_') if drone_name else ''
             use_drone = self._use_drone_in_filename(parent)
@@ -1912,8 +2063,7 @@ class PlotExportWidget(QWidget):
             import datetime
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             current_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            log_name = os.path.basename(parent.current_file) if hasattr(parent, 'current_file') and parent.current_file else "LogFile"
-            log_name = os.path.splitext(log_name)[0]
+            log_name = self._get_current_log_name(parent)
             drone_name = self._get_drone_name(parent)
             drone_name_filename = drone_name.replace(' ', '_') if drone_name else ''
             use_drone = self._use_drone_in_filename(parent)
@@ -1994,9 +2144,7 @@ class PlotExportWidget(QWidget):
             import datetime
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             current_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            # Get log name (without extension)
-            log_name = os.path.basename(parent.current_file) if hasattr(parent, 'current_file') and parent.current_file else "LogFile"
-            log_name = os.path.splitext(log_name)[0]
+            log_name = self._get_current_log_name(parent)
             drone_name = self._get_drone_name(parent)
             drone_name_filename = drone_name.replace(' ', '_') if drone_name else ''
             use_drone = self._use_drone_in_filename(parent)

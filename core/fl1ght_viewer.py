@@ -11,7 +11,7 @@ import tempfile
 import numpy as np
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QMessageBox, QSizePolicy,
-    QFileDialog, QTabWidget
+    QFileDialog, QTabWidget, QDialog, QListWidget, QListWidgetItem, QDialogButtonBox, QLabel
 )
 from PySide6.QtGui import QFont, QPainter
 from PySide6.QtCore import Qt, QMargins
@@ -135,6 +135,186 @@ class FL1GHTViewer(QWidget):
             font.setBold(True)
         return font
 
+    def extract_flights_from_error(self, error_text):
+        """Extract flight information from the error output of blackbox_decode."""
+        flights = []
+        lines = error_text.split('\n')
+        in_table = False
+        
+        print(f"[DEBUG] Extracting flights from error output")
+        
+        for line in lines:
+            line = line.strip()
+            if "Index" in line and "Start offset" in line and "Size" in line:
+                in_table = True
+                print(f"[DEBUG] Found table header: {line}")
+                continue
+            
+            if in_table and line and line[0].isdigit():
+                print(f"[DEBUG] Parsing flight line: {line}")
+                parts = line.split()
+                if len(parts) >= 3:  # At least index, offset, and size
+                    try:
+                        index = int(parts[0])
+                        start_offset = int(parts[1])
+                        size = int(parts[2])
+                        flights.append({
+                            'index': index,
+                            'start_offset': start_offset,
+                            'size': size
+                        })
+                        print(f"[DEBUG] Added flight: index={index}, size={size}")
+                    except (ValueError, IndexError) as e:
+                        print(f"[DEBUG] Failed to parse flight line: {e}")
+                        continue
+        
+        print(f"[DEBUG] Found {len(flights)} flights")
+        return flights if flights else None
+
+    def estimate_flight_duration(self, flight_size):
+        """Estimate flight duration in minutes based on flight data size.
+        
+        This is an approximation - blackbox logs around 2MB per minute depending on 
+        logging rate and enabled features.
+        """
+        # Typical logging rates: ~2MB per minute at 2K logging rate
+        # Adjust this value based on your logging configuration
+        bytes_per_minute = 2 * 1024 * 1024  # 2MB per minute
+        
+        # Convert bytes to minutes
+        minutes = flight_size / bytes_per_minute
+        
+        # If less than a minute, show seconds
+        if minutes < 1:
+            seconds = int(minutes * 60)
+            return f"{seconds} sec"
+        
+        # If it's a longer flight, show minutes and seconds
+        minutes_int = int(minutes)
+        seconds = int((minutes - minutes_int) * 60)
+        
+        if seconds > 0:
+            return f"{minutes_int}:{seconds:02d} min"
+        else:
+            return f"{minutes_int} min"
+
+    def show_flight_selection_dialog(self, filename, flights):
+        """Show a dialog to select which flight to load and return the selected index."""
+        if not flights:
+            return None
+            
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Select Flight Log")
+        dialog.setMinimumWidth(600)
+        dialog.setMinimumHeight(400)
+        
+        # Set fccTYPO font for the dialog
+        font = QFont("fccTYPO")
+        font.setPointSize(14)
+        dialog.setFont(font)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Add label with larger font
+        header_font = QFont("fccTYPO")
+        header_font.setPointSize(18)
+        
+        # Check which tab we're in
+        current_tab = self.tab_widget.currentIndex()
+        is_spectral = current_tab == 1
+        is_step_response = current_tab == 2
+        
+        # Set max selection based on tab
+        if is_spectral:
+            max_selection = 2
+            selection_text = "flights"
+            tab_note = "spectral analysis"
+        elif is_step_response:
+            max_selection = 5
+            selection_text = "flights"
+            tab_note = "step response"
+        else:
+            max_selection = len(flights)
+            selection_text = "flight(s)" if max_selection > 1 else "flight"
+            tab_note = None
+        
+        label = QLabel(f"File '{filename}' contains {len(flights)} flight logs.\nPlease select which {selection_text} to load:")
+        if tab_note:
+            label.setText(label.text() + f"\n(Note: Maximum {max_selection} flights can be selected for {tab_note})")
+        label.setFont(header_font)
+        layout.addWidget(label)
+        
+        # Create list widget with multiple selection
+        list_widget = QListWidget()
+        list_widget.setFont(font)
+        list_widget.setSelectionMode(QListWidget.MultiSelection)  # Allow multiple selection
+        for flight in flights:
+            # Calculate approximate duration
+            duration = self.estimate_flight_duration(flight['size'])
+            size_mb = flight['size'] / (1024 * 1024)  # Convert to MB
+            
+            # Create item with duration and size information
+            item = QListWidgetItem(f"Flight {flight['index']} - Duration: {duration} (Size: {size_mb:.1f} MB)")
+            item.setData(Qt.UserRole, flight['index'])
+            list_widget.addItem(item)
+        
+        # Select the first item by default
+        if list_widget.count() > 0:
+            list_widget.setCurrentRow(0)
+        
+        # Add selection change handler for spectral analysis or step response
+        if is_spectral or is_step_response:
+            def on_selection_changed():
+                selected = list_widget.selectedItems()
+                if len(selected) > max_selection:
+                    # Uncheck the last selected item
+                    selected[-1].setSelected(False)
+                    QMessageBox.warning(dialog, "Warning", f"You can only select up to {max_selection} flights for {tab_note}.")
+            list_widget.itemSelectionChanged.connect(on_selection_changed)
+        
+        layout.addWidget(list_widget)
+        
+        # Add buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.Cancel)
+        button_box.setFont(font)
+        
+        # Create custom LOAD button
+        load_button = button_box.addButton("LOAD", QDialogButtonBox.AcceptRole)
+        load_button.setStyleSheet("""
+            QPushButton {
+                background-color: #00ff00;
+                color: black;
+                border: 2px solid #00ff00;
+                border-radius: 5px;
+                padding: 5px;
+            }
+            QPushButton:hover {
+                background-color: #00cc00;
+                border-color: #00cc00;
+            }
+            QPushButton:pressed {
+                background-color: #009900;
+                border-color: #009900;
+            }
+        """)
+        
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+        
+        # Show dialog and get selected indices
+        result = dialog.exec()
+        print(f"[DEBUG] Dialog result: {result}")
+        
+        if result == QDialog.Accepted and list_widget.selectedItems():
+            selected_indices = [item.data(Qt.UserRole) for item in list_widget.selectedItems()]
+            if (is_spectral or is_step_response) and len(selected_indices) > max_selection:
+                selected_indices = selected_indices[:max_selection]  # Take only first N selections
+            print(f"[DEBUG] Selected flight indices: {selected_indices}")
+            return selected_indices
+        
+        return None
+
     def load_bbl(self):
         """Load BBL file(s) and convert to CSV."""
         file_paths, _ = QFileDialog.getOpenFileNames(
@@ -146,110 +326,275 @@ class FL1GHTViewer(QWidget):
         
         if not file_paths:
             return
-            
+        
+        files_loaded = 0
+        
         for file_path in file_paths:
-            # Get the filename for display
-            filename = os.path.basename(file_path)
-            
-            # Check if this log is already loaded
-            if filename in self.feature_widget.loaded_logs:
-                QMessageBox.information(self, "Info", f"Log '{filename}' is already loaded.")
-                continue
-            
-            # --- Parse PID values from .bbl header ---
-            pid_vals = {'roll': None, 'pitch': None, 'yaw': None}
             try:
-                with open(file_path, 'r', encoding='latin-1', errors='ignore') as f:
-                    for i, line in enumerate(f):
-                        if 'rollPID:' in line:
-                            pid_vals['roll'] = line.split('rollPID:')[1].strip().split()[0]
-                        if 'pitchPID:' in line:
-                            pid_vals['pitch'] = line.split('pitchPID:')[1].strip().split()[0]
-                        if 'yawPID:' in line:
-                            pid_vals['yaw'] = line.split('yawPID:')[1].strip().split()[0]
-                        if i > 100:
-                            break
-            except Exception as e:
-                print(f"[DEBUG] Could not parse PID from .bbl: {e}")
-            
-            try:
+                # Get the filename for display
+                filename = os.path.basename(file_path)
+                base_filename = os.path.splitext(filename)[0]
+                
+                print(f"[DEBUG] Processing file: {filename}")
+                
+                # Check if this log is already loaded
+                if filename in self.feature_widget.loaded_logs:
+                    QMessageBox.information(self, "Info", f"Log '{filename}' is already loaded.")
+                    continue
+                
+                # Parse PID values from the BBL header
+                pid_vals = {'roll': None, 'pitch': None, 'yaw': None}
+                try:
+                    with open(file_path, 'r', encoding='latin-1', errors='ignore') as f:
+                        for i, line in enumerate(f):
+                            if 'rollPID:' in line:
+                                pid_vals['roll'] = line.split('rollPID:')[1].strip().split()[0]
+                            if 'pitchPID:' in line:
+                                pid_vals['pitch'] = line.split('pitchPID:')[1].strip().split()[0]
+                            if 'yawPID:' in line:
+                                pid_vals['yaw'] = line.split('yawPID:')[1].strip().split()[0]
+                            if i > 100:
+                                break
+                except Exception as e:
+                    print(f"[DEBUG] Could not parse PID from .bbl: {e}")
+                
                 # Get the path to the blackbox decoder tool
                 decoder_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "tools", "blackbox_decode")
                 
-                # Run blackbox decoder with stdout output
-                result = subprocess.run(
-                    [decoder_path, '--stdout', '--unit-rotation', 'deg/s', file_path],
+                # First try to run the decoder without an index to see if it contains multiple flights
+                initial_cmd = [decoder_path, '--stdout', '--unit-rotation', 'deg/s', file_path]
+                print(f"[DEBUG] Running initial decoder command: {' '.join(initial_cmd)}")
+                
+                initial_result = subprocess.run(
+                    initial_cmd,
                     capture_output=True,
                     text=True
                 )
                 
-                if result.returncode != 0:
-                    QMessageBox.critical(self, "Error", f"Failed to decode BBL file {filename}: {result.stderr}")
-                    continue
+                selected_indices = None
+                display_filename = filename
+                
+                # Check if this is a multi-flight file
+                if initial_result.returncode != 0 and "This file contains multiple flight logs" in initial_result.stderr:
+                    print(f"[DEBUG] Multiple flights detected in error output")
                     
-                # Create a temporary file to store the CSV data
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as temp_file:
-                    temp_file.write(result.stdout)
-                    temp_file_path = temp_file.name
-    
-                # Load the CSV data
-                df = pd.read_csv(temp_file_path)
-    
-                # Inject PID values as columns if found
-                if pid_vals['roll']:
-                    df['rollPID'] = pid_vals['roll']
-                if pid_vals['pitch']:
-                    df['pitchPID'] = pid_vals['pitch']
-                if pid_vals['yaw']:
-                    df['yawPID'] = pid_vals['yaw']
-                
-                # Strip leading/trailing spaces from all column names
-                df.columns = df.columns.str.strip()
-                
-                if df.empty:
-                    QMessageBox.warning(self, "Warning", f"No valid data found in file {filename}")
-                    continue
+                    # Extract flight information from the error output
+                    flights = self.extract_flights_from_error(initial_result.stderr)
                     
-                # Find time column
-                time_col = next((col for col in df.columns if 'time' in col.lower()), None)
-                if time_col is None:
-                    QMessageBox.critical(self, "Error", f"No time column found in file {filename}")
-                    continue
+                    if not flights:
+                        QMessageBox.warning(self, "Warning", 
+                            "Multiple flights detected but couldn't parse flight information. Please try again.")
+                        continue
                     
-                # Rename time column to 'time' for consistency
-                df = df.rename(columns={time_col: 'time'})
-                
-                # Normalize time data
-                df['time'] = (df['time'] - df['time'].iloc[0]) / 1_000_000.0
-                
-                # Store the dataframe in the loaded_logs dictionary
-                self.feature_widget.loaded_logs[filename] = df
-                
-                # Add the filename to the logs list and combo box
-                self.feature_widget.logs_list.addItem(filename)
-                self.feature_widget.logs_combo.addItem(filename)
-                
-                # If this is the first log, select it automatically
-                if len(self.feature_widget.loaded_logs) == 1:
-                    self.feature_widget.logs_list.setCurrentRow(0)
-                    self.feature_widget.logs_combo.setCurrentIndex(0)
-                    self.feature_widget.current_log = df
-                    self.df = df
-                    self.feature_widget.df = df
+                    # Show dialog to select which flight(s) to load
+                    selected_indices = self.show_flight_selection_dialog(filename, flights)
                     
-                    # Update actual time range
-                    self.actual_time_range = (df['time'].min(), df['time'].max())
-                    self.chart_manager.actual_time_max = float(df['time'].max())
+                    if not selected_indices:
+                        # User canceled, skip this file
+                        print(f"[DEBUG] User canceled flight selection")
+                        continue
                     
-                    # Clear existing frequency analyzer plots but don't update with new data
-                    self.frequency_analyzer_widget.clear_all_plots()
+                    # Process each selected flight
+                    for selected_index in selected_indices:
+                        # Update filename to include the selected index
+                        display_filename = f"{base_filename}[{selected_index}]"
+                        
+                        # Check if this log is already loaded
+                        if display_filename in self.feature_widget.loaded_logs:
+                            print(f"[DEBUG] Flight {display_filename} already loaded, skipping")
+                            continue
+                        
+                        # Now run the decoder with the selected index
+                        decoder_cmd = [decoder_path, '--stdout', '--unit-rotation', 'deg/s', '--index', str(selected_index), file_path]
+                        print(f"[DEBUG] Running decoder with index {selected_index}: {' '.join(decoder_cmd)}")
+                        
+                        result = subprocess.run(
+                            decoder_cmd,
+                            capture_output=True,
+                            text=True
+                        )
+                        
+                        if result.returncode != 0:
+                            error_msg = result.stderr.strip()
+                            print(f"[DEBUG] Decoder error with index: {error_msg}")
+                            QMessageBox.critical(self, "Error", f"Failed to decode BBL file with index {selected_index}: {error_msg}")
+                            continue
+                        
+                        if not result.stdout.strip():
+                            print(f"[DEBUG] No output from decoder with index")
+                            QMessageBox.warning(self, "Warning", f"No data was decoded from flight {selected_index}")
+                            continue
+                        
+                        print(f"[DEBUG] Successfully decoded flight {selected_index}")
+                        stdout_data = result.stdout
+                        
+                        # Create a temporary file to store the CSV data
+                        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as temp_file:
+                            temp_file.write(stdout_data)
+                            temp_file_path = temp_file.name
+                        
+                        try:
+                            # Load the CSV data
+                            df = pd.read_csv(temp_file_path)
+                            
+                            # Inject PID values as columns if found
+                            if pid_vals['roll']:
+                                df['rollPID'] = pid_vals['roll']
+                            if pid_vals['pitch']:
+                                df['pitchPID'] = pid_vals['pitch']
+                            if pid_vals['yaw']:
+                                df['yawPID'] = pid_vals['yaw']
+                            
+                            # Strip leading/trailing spaces from all column names
+                            df.columns = df.columns.str.strip()
+                            
+                            if df.empty:
+                                print(f"[DEBUG] DataFrame is empty")
+                                QMessageBox.warning(self, "Warning", f"No valid data found in flight {selected_index}")
+                                continue
+                            
+                            # Find time column
+                            time_col = next((col for col in df.columns if 'time' in col.lower()), None)
+                            if time_col is None:
+                                print(f"[DEBUG] No time column found")
+                                QMessageBox.critical(self, "Error", f"No time column found in flight {selected_index}")
+                                continue
+                            
+                            # Rename time column to 'time' for consistency
+                            df = df.rename(columns={time_col: 'time'})
+                            
+                            # Normalize time data
+                            df['time'] = (df['time'] - df['time'].iloc[0]) / 1_000_000.0
+                            
+                            print(f"[DEBUG] Adding flight to loaded_logs as {display_filename}")
+                            
+                            # Store the dataframe in the loaded_logs dictionary
+                            self.feature_widget.loaded_logs[display_filename] = df
+                            
+                            # Add the filename to the logs list and combo box
+                            self.feature_widget.logs_list.addItem(display_filename)
+                            self.feature_widget.logs_combo.addItem(display_filename)
+                            
+                            # If this is the first log, select it automatically
+                            if len(self.feature_widget.loaded_logs) == 1:
+                                self.feature_widget.logs_list.setCurrentRow(0)
+                                self.feature_widget.logs_combo.setCurrentIndex(0)
+                                self.feature_widget.current_log = df
+                                self.df = df
+                                self.feature_widget.df = df
+                                
+                                # Update actual time range
+                                self.actual_time_range = (df['time'].min(), df['time'].max())
+                                self.chart_manager.actual_time_max = float(df['time'].max())
+                                
+                                # Clear existing frequency analyzer plots but don't update with new data
+                                self.frequency_analyzer_widget.clear_all_plots()
+                            
+                            files_loaded += 1
+                            print(f"[DEBUG] Successfully loaded flight {display_filename}")
+                        finally:
+                            # Clean up temporary file
+                            try:
+                                os.unlink(temp_file_path)
+                            except Exception as e:
+                                print(f"[DEBUG] Failed to clean up temp file: {e}")
+                else:
+                    # This is a single flight file or the decoder succeeded
+                    if initial_result.returncode != 0:
+                        # Decoder failed for a reason other than multiple flights
+                        error_msg = initial_result.stderr.strip()
+                        print(f"[DEBUG] Decoder error: {error_msg}")
+                        QMessageBox.critical(self, "Error", f"Failed to decode BBL file {filename}: {error_msg}")
+                        continue
+                    
+                    # Use the output from the initial run
+                    stdout_data = initial_result.stdout
+                    
+                    if not stdout_data.strip():
+                        print(f"[DEBUG] No output from decoder")
+                        QMessageBox.warning(self, "Warning", f"No data was decoded from file {filename}")
+                        continue
+                    
+                    print(f"[DEBUG] Successfully decoded single flight")
+                    
+                    # Create a temporary file to store the CSV data
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as temp_file:
+                        temp_file.write(stdout_data)
+                        temp_file_path = temp_file.name
+                    
+                    try:
+                        # Load the CSV data
+                        df = pd.read_csv(temp_file_path)
+                        
+                        # Inject PID values as columns if found
+                        if pid_vals['roll']:
+                            df['rollPID'] = pid_vals['roll']
+                        if pid_vals['pitch']:
+                            df['pitchPID'] = pid_vals['pitch']
+                        if pid_vals['yaw']:
+                            df['yawPID'] = pid_vals['yaw']
+                        
+                        # Strip leading/trailing spaces from all column names
+                        df.columns = df.columns.str.strip()
+                        
+                        if df.empty:
+                            print(f"[DEBUG] DataFrame is empty")
+                            QMessageBox.warning(self, "Warning", f"No valid data found in file {filename}")
+                            continue
+                        
+                        # Find time column
+                        time_col = next((col for col in df.columns if 'time' in col.lower()), None)
+                        if time_col is None:
+                            print(f"[DEBUG] No time column found")
+                            QMessageBox.critical(self, "Error", f"No time column found in file {filename}")
+                            continue
+                        
+                        # Rename time column to 'time' for consistency
+                        df = df.rename(columns={time_col: 'time'})
+                        
+                        # Normalize time data
+                        df['time'] = (df['time'] - df['time'].iloc[0]) / 1_000_000.0
+                        
+                        print(f"[DEBUG] Adding flight to loaded_logs as {filename}")
+                        
+                        # Store the dataframe in the loaded_logs dictionary
+                        self.feature_widget.loaded_logs[filename] = df
+                        
+                        # Add the filename to the logs list and combo box
+                        self.feature_widget.logs_list.addItem(filename)
+                        self.feature_widget.logs_combo.addItem(filename)
+                        
+                        # If this is the first log, select it automatically
+                        if len(self.feature_widget.loaded_logs) == 1:
+                            self.feature_widget.logs_list.setCurrentRow(0)
+                            self.feature_widget.logs_combo.setCurrentIndex(0)
+                            self.feature_widget.current_log = df
+                            self.df = df
+                            self.feature_widget.df = df
+                            
+                            # Update actual time range
+                            self.actual_time_range = (df['time'].min(), df['time'].max())
+                            self.chart_manager.actual_time_max = float(df['time'].max())
+                            
+                            # Clear existing frequency analyzer plots but don't update with new data
+                            self.frequency_analyzer_widget.clear_all_plots()
+                        
+                        files_loaded += 1
+                        print(f"[DEBUG] Successfully loaded flight {filename}")
+                    finally:
+                        # Clean up temporary file
+                        try:
+                            os.unlink(temp_file_path)
+                        except Exception as e:
+                            print(f"[DEBUG] Failed to clean up temp file: {e}")
                 
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to load file {filename}: {str(e)}")
+                print(f"[DEBUG] Error loading file: {e}")
+                QMessageBox.critical(self, "Error", f"Failed to load file: {str(e)}")
                 continue
         
-        if len(file_paths) > 0:
-            QMessageBox.information(self, "Success", f"Successfully loaded {len(file_paths)} file(s)")
+        if files_loaded > 0:
+            QMessageBox.information(self, "Success", f"Successfully loaded {files_loaded} file(s)")
 
     def plot_selected(self):
         """Unified method for plotting one or multiple logs"""
@@ -388,25 +733,27 @@ class FL1GHTViewer(QWidget):
         self.control_widget.scroll_slider.setValue(500)
 
     def set_time_domain_defaults(self):
-        # Select throttle and gyro filtered, deselect others
-        self.feature_widget.throttle_checkbox.setChecked(True)
-        self.feature_widget.gyro_scaled_checkbox.setChecked(True)
-        self.feature_widget.gyro_unfilt_checkbox.setChecked(False)
-        self.feature_widget.pid_p_checkbox.setChecked(False)
-        self.feature_widget.pid_i_checkbox.setChecked(False)
-        self.feature_widget.pid_d_checkbox.setChecked(False)
-        self.feature_widget.setpoint_checkbox.setChecked(False)
-        self.feature_widget.rc_checkbox.setChecked(False)
-        self.feature_widget.motor_checkbox.setChecked(False)
+        # Select gyro filtered, setpoint, and throttle, deselect others
+        self.feature_widget.throttle_checkbox.setChecked(True)      # Throttle
+        self.feature_widget.gyro_scaled_checkbox.setChecked(True)   # Gyro (filtered)
+        self.feature_widget.gyro_unfilt_checkbox.setChecked(False)  # Gyro (raw)
+        self.feature_widget.pid_p_checkbox.setChecked(False)        # P-Term
+        self.feature_widget.pid_i_checkbox.setChecked(False)        # I-Term
+        self.feature_widget.pid_d_checkbox.setChecked(False)        # D-Term
+        self.feature_widget.pid_f_checkbox.setChecked(False)        # FeedForward
+        self.feature_widget.setpoint_checkbox.setChecked(True)      # Setpoint
+        self.feature_widget.rc_checkbox.setChecked(False)           # RC Command
+        self.feature_widget.motor_checkbox.setChecked(False)        # Motor Outputs
 
     def set_spectral_defaults(self):
         # Select gyro filtered and gyro raw, deselect others
         self.feature_widget.throttle_checkbox.setChecked(False)
-        self.feature_widget.gyro_scaled_checkbox.setChecked(True)
-        self.feature_widget.gyro_unfilt_checkbox.setChecked(True)
+        self.feature_widget.gyro_scaled_checkbox.setChecked(True)  # Gyro (filtered)
+        self.feature_widget.gyro_unfilt_checkbox.setChecked(True)  # Gyro (raw)
         self.feature_widget.pid_p_checkbox.setChecked(False)
         self.feature_widget.pid_i_checkbox.setChecked(False)
         self.feature_widget.pid_d_checkbox.setChecked(False)
+        self.feature_widget.pid_f_checkbox.setChecked(False)
         self.feature_widget.setpoint_checkbox.setChecked(False)
         self.feature_widget.rc_checkbox.setChecked(False)
         self.feature_widget.motor_checkbox.setChecked(False)
@@ -458,6 +805,10 @@ class FL1GHTViewer(QWidget):
         # Remember the current tab index for the next tab change
         self._previous_tab_index = index
         
+        # Deselect all logs when changing tabs
+        self.feature_widget.logs_list.clearSelection()
+        self.feature_widget.selected_logs = []
+        
         if index == 0:
             self.set_time_domain_defaults()
             self.feature_widget.set_time_domain_mode(True)
@@ -467,20 +818,18 @@ class FL1GHTViewer(QWidget):
                 self.plot_selected()
         elif index == 1:
             self.set_spectral_defaults()
-            self.feature_widget.set_time_domain_mode(True)
-            self.feature_widget.throttle_checkbox.setEnabled(False)
-            self.feature_widget.motor_checkbox.setEnabled(False)
+            self.feature_widget.set_spectral_mode(True)
             self.feature_widget.legend_group.setVisible(True)
         elif index == 2:
             self.set_step_response_defaults()
-            self.feature_widget.set_time_domain_mode(False)
+            self.feature_widget.set_step_response_mode(True)
             self.feature_widget.legend_group.setVisible(False)
         elif index == 3:
             self.set_frequency_analyzer_defaults()
             self.feature_widget.set_time_domain_mode(False)
             self.feature_widget.legend_group.setVisible(False)
             # No longer auto-update frequency analyzer plots
-            # Let user click "Show Plot" button instead 
+            # Let user click "Show Plot" button instead
 
     def plot_multiple_logs(self):
         """Plot multiple selected logs together"""

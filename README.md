@@ -40,6 +40,14 @@ A modern, feature-rich blackbox log viewer for FPV drone flight data analysis. D
 - **Multi-Log Support**
   - Load and select multiple logs for analysis
   - Plot multiple logs simultaneously in Spectral Analysis and Step Response tabs
+- **Multi-Flight BBL Support**
+  - Load and analyze individual flights from multi-flight BBL files
+  - Flight selection dialog with duration and size information
+  - Support for different flight limits per analysis mode:
+    - Time Domain: Single flight
+    - Spectral Analysis: Up to 2 flights
+    - Step Response: Up to 5 flights
+    - Frequency Analyzer: Single flight
 
 ---
 
