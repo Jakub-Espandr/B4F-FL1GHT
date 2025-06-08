@@ -136,144 +136,178 @@ class FL1GHTViewer(QWidget):
         return font
 
     def load_bbl(self):
-        """Load a BBL file and convert it to CSV."""
-        file_path, _ = QFileDialog.getOpenFileName(
+        """Load BBL file(s) and convert to CSV."""
+        file_paths, _ = QFileDialog.getOpenFileNames(
             self,
-            "Select BBL file",
+            "Select BBL file(s)",
             "",
             "BBL Files (*.bbl);;All Files (*.*)"
         )
         
-        if not file_path:
+        if not file_paths:
             return
             
-        # Store the current file path
-        self.current_file = file_path
+        for file_path in file_paths:
+            # Get the filename for display
+            filename = os.path.basename(file_path)
+            
+            # Check if this log is already loaded
+            if filename in self.feature_widget.loaded_logs:
+                QMessageBox.information(self, "Info", f"Log '{filename}' is already loaded.")
+                continue
+            
+            # --- Parse PID values from .bbl header ---
+            pid_vals = {'roll': None, 'pitch': None, 'yaw': None}
+            try:
+                with open(file_path, 'r', encoding='latin-1', errors='ignore') as f:
+                    for i, line in enumerate(f):
+                        if 'rollPID:' in line:
+                            pid_vals['roll'] = line.split('rollPID:')[1].strip().split()[0]
+                        if 'pitchPID:' in line:
+                            pid_vals['pitch'] = line.split('pitchPID:')[1].strip().split()[0]
+                        if 'yawPID:' in line:
+                            pid_vals['yaw'] = line.split('yawPID:')[1].strip().split()[0]
+                        if i > 100:
+                            break
+            except Exception as e:
+                print(f"[DEBUG] Could not parse PID from .bbl: {e}")
+            
+            try:
+                # Get the path to the blackbox decoder tool
+                decoder_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "tools", "blackbox_decode")
+                
+                # Run blackbox decoder with stdout output
+                result = subprocess.run(
+                    [decoder_path, '--stdout', '--unit-rotation', 'deg/s', file_path],
+                    capture_output=True,
+                    text=True
+                )
+                
+                if result.returncode != 0:
+                    QMessageBox.critical(self, "Error", f"Failed to decode BBL file {filename}: {result.stderr}")
+                    continue
+                    
+                # Create a temporary file to store the CSV data
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as temp_file:
+                    temp_file.write(result.stdout)
+                    temp_file_path = temp_file.name
+    
+                # Load the CSV data
+                df = pd.read_csv(temp_file_path)
+    
+                # Inject PID values as columns if found
+                if pid_vals['roll']:
+                    df['rollPID'] = pid_vals['roll']
+                if pid_vals['pitch']:
+                    df['pitchPID'] = pid_vals['pitch']
+                if pid_vals['yaw']:
+                    df['yawPID'] = pid_vals['yaw']
+                
+                # Strip leading/trailing spaces from all column names
+                df.columns = df.columns.str.strip()
+                
+                if df.empty:
+                    QMessageBox.warning(self, "Warning", f"No valid data found in file {filename}")
+                    continue
+                    
+                # Find time column
+                time_col = next((col for col in df.columns if 'time' in col.lower()), None)
+                if time_col is None:
+                    QMessageBox.critical(self, "Error", f"No time column found in file {filename}")
+                    continue
+                    
+                # Rename time column to 'time' for consistency
+                df = df.rename(columns={time_col: 'time'})
+                
+                # Normalize time data
+                df['time'] = (df['time'] - df['time'].iloc[0]) / 1_000_000.0
+                
+                # Store the dataframe in the loaded_logs dictionary
+                self.feature_widget.loaded_logs[filename] = df
+                
+                # Add the filename to the logs list and combo box
+                self.feature_widget.logs_list.addItem(filename)
+                self.feature_widget.logs_combo.addItem(filename)
+                
+                # If this is the first log, select it automatically
+                if len(self.feature_widget.loaded_logs) == 1:
+                    self.feature_widget.logs_list.setCurrentRow(0)
+                    self.feature_widget.logs_combo.setCurrentIndex(0)
+                    self.feature_widget.current_log = df
+                    self.df = df
+                    self.feature_widget.df = df
+                    
+                    # Update actual time range
+                    self.actual_time_range = (df['time'].min(), df['time'].max())
+                    self.chart_manager.actual_time_max = float(df['time'].max())
+                    
+                    # Clear existing frequency analyzer plots but don't update with new data
+                    self.frequency_analyzer_widget.clear_all_plots()
+                
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to load file {filename}: {str(e)}")
+                continue
         
-        # --- NEW: Parse PID values from .bbl header ---
-        pid_vals = {'roll': None, 'pitch': None, 'yaw': None}
-        try:
-            with open(file_path, 'r', encoding='latin-1', errors='ignore') as f:
-                for i, line in enumerate(f):
-                    if 'rollPID:' in line:
-                        pid_vals['roll'] = line.split('rollPID:')[1].strip().split()[0]
-                    if 'pitchPID:' in line:
-                        pid_vals['pitch'] = line.split('pitchPID:')[1].strip().split()[0]
-                    if 'yawPID:' in line:
-                        pid_vals['yaw'] = line.split('yawPID:')[1].strip().split()[0]
-                    if i > 100:
-                        break
-            print(f"[DEBUG] Parsed PID values from .bbl: {pid_vals}")
-        except Exception as e:
-            print(f"[DEBUG] Could not parse PID from .bbl: {e}")
-        
-        try:
-            # Get the path to the blackbox decoder tool
-            decoder_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "tools", "blackbox_decode")
-            
-            # Run blackbox decoder with stdout output
-            result = subprocess.run(
-                [decoder_path, '--stdout', '--unit-rotation', 'deg/s', file_path],
-                capture_output=True,
-                text=True
-            )
-            
-            if result.returncode != 0:
-                QMessageBox.critical(self, "Error", f"Failed to decode BBL file: {result.stderr}")
-                return
-                
-            # Create a temporary file to store the CSV data
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as temp_file:
-                temp_file.write(result.stdout)
-                temp_file_path = temp_file.name
-
-            # DEBUG: Print the first 20 lines of the CSV (header)
-            print("[DEBUG] First 20 lines of CSV header:")
-            with open(temp_file_path, 'r') as f:
-                for i, line in enumerate(f):
-                    print(line.strip())
-                    if i >= 19:
-                        break
-
-            # Load the CSV data
-            self.df = pd.read_csv(temp_file_path)
-
-            # Inject PID values as columns if found
-            if pid_vals['roll']:
-                self.df['rollPID'] = pid_vals['roll']
-            if pid_vals['pitch']:
-                self.df['pitchPID'] = pid_vals['pitch']
-            if pid_vals['yaw']:
-                self.df['yawPID'] = pid_vals['yaw']
-            
-            # Strip leading/trailing spaces from all column names
-            self.df.columns = self.df.columns.str.strip()
-            
-            if self.df.empty:
-                QMessageBox.warning(self, "Warning", "No valid data found in the file")
-                return
-                
-            # Find time column
-            time_col = next((col for col in self.df.columns if 'time' in col.lower()), None)
-            if time_col is None:
-                QMessageBox.critical(self, "Error", "No time column found in the data")
-                return
-                
-            # Rename time column to 'time' for consistency
-            self.df = self.df.rename(columns={time_col: 'time'})
-            
-            # Normalize time data
-            self.df['time'] = (self.df['time'] - self.df['time'].iloc[0]) / 1_000_000.0
-            
-            # Update actual time range
-            self.actual_time_range = (self.df['time'].min(), self.df['time'].max())
-            self.chart_manager.actual_time_max = float(self.df['time'].max())
-            
-            # Update feature widget with dataframe
-            self.feature_widget.df = self.df
-            
-            # Update spectral analysis after loading data
-            self.spectral_widget.update_spectrum(self.df)
-            
-            # Clear existing frequency analyzer plots but don't update with new data
-            # Let user click "Show Plot" button instead
-            self.frequency_analyzer_widget.clear_all_plots()
-            
-            # If we're on the Time Domain tab, update the plot
-            if self.tab_widget.currentIndex() == 0:
-                self.plot_selected()
-            
-            QMessageBox.information(self, "Success", f"Successfully loaded: {os.path.basename(file_path)}")
-                
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load file: {str(e)}")
-            return
+        if len(file_paths) > 0:
+            QMessageBox.information(self, "Success", f"Successfully loaded {len(file_paths)} file(s)")
 
     def plot_selected(self):
-        if not hasattr(self, 'df') or self.df is None:
-            QMessageBox.warning(self, "Warning", "Please load a data file first.")
+        """Unified method for plotting one or multiple logs"""
+        # Check if we have logs selected in the list widget
+        if hasattr(self.feature_widget, 'selected_logs') and self.feature_widget.selected_logs:
+            current_tab = self.tab_widget.currentIndex()
+            if current_tab == 1:  # Spectral Analysis
+                # Always clear the spectrum plot before plotting
+                for (chart_view_full, chart_view_zoom) in self.spectral_widget.chart_views:
+                    chart_view_full.chart().removeAllSeries()
+                    chart_view_zoom.chart().removeAllSeries()
+                # If multiple logs are selected, plot all
+                if len(self.feature_widget.selected_logs) > 1:
+                    self.plot_multiple_logs_spectral()
+                    return
+                # If only one log is selected, plot just that one
+                elif len(self.feature_widget.selected_logs) == 1:
+                    log_name = self.feature_widget.selected_logs[0]
+                    self.feature_widget.current_log = self.feature_widget.loaded_logs[log_name]
+                    self.spectral_widget.update_spectrum(self.feature_widget.current_log, log_label=log_name)
+                    return
+            if current_tab == 2:
+                # Step Response tab: multi-log plotting
+                if len(self.feature_widget.selected_logs) > 1:
+                    self.plot_multiple_logs_step_response()
+                    return
+            # For Time Domain tab, only allow single log
+            if current_tab == 0:
+                if len(self.feature_widget.selected_logs) > 1:
+                    QMessageBox.information(self, "Info", "Only one log can be plotted at a time in the Time Domain tab.")
+                    return
+            # If only one log is selected
+            if len(self.feature_widget.selected_logs) == 1:
+                log_name = self.feature_widget.selected_logs[0]
+                self.feature_widget.current_log = self.feature_widget.loaded_logs[log_name]
+        # Check if we have a current log
+        if not hasattr(self.feature_widget, 'current_log') or self.feature_widget.current_log is None:
+            QMessageBox.warning(self, "Warning", "Please select a log first.")
             return
-
         # Only plot for the active tab
         current_tab = self.tab_widget.currentIndex()
         # 0 = Time Domain, 1 = Spectral Analysis, 2 = Step Response, 3 = Frequency Analyzer
         if current_tab == 0:
             try:
                 self.control_widget.progress_bar.setVisible(True)
-                self.control_widget.progress_bar.setValue(0)
-                
                 # Get selected features from the feature widget
                 selected_features = self.feature_widget.get_selected_features()
                 if not selected_features:
                     QMessageBox.warning(self, "Warning", "Please select at least one feature to plot.")
                     self.control_widget.progress_bar.setVisible(False)
                     return
-                
                 # Get the current line width from feature widget
                 line_width = getattr(self.feature_widget, 'current_line_width', 1.0)
-                
                 # Plot selected features with the current line width
-                self.chart_manager.plot_features(self.df, selected_features, self.control_widget.progress_bar, line_width=line_width)
+                series_by_category = self.chart_manager.plot_features(self.feature_widget.current_log, selected_features, self.control_widget.progress_bar, line_width=line_width)
+                # Update the legend with the new series
+                if series_by_category:
+                    self.feature_widget.update_legend(series_by_category)
                 self.control_widget.progress_bar.setValue(100)
                 self.control_widget.progress_bar.setVisible(False)
             except Exception as e:
@@ -281,37 +315,39 @@ class FL1GHTViewer(QWidget):
                 self.control_widget.progress_bar.setVisible(False)
         elif current_tab == 1:
             # Spectral analysis tab
-            self.update_spectral_analysis()
+            # Already handled above
+            pass
         elif current_tab == 2:
             # Step response tab
             # Update step response analysis
             line_width = getattr(self.feature_widget, 'current_line_width', 1.0)
-            self.step_response_widget.update_step_response(self.df, line_width=line_width)
+            # Pass the correct log name (filename) if available
+            log_name = None
+            if hasattr(self.feature_widget, 'selected_logs') and self.feature_widget.selected_logs:
+                log_name = self.feature_widget.selected_logs[0]
+            self.step_response_widget.update_step_response(self.feature_widget.current_log, line_width=line_width, log_name=log_name)
         elif current_tab == 3:
             # Frequency analyzer tab
             try:
                 # Calculate the Nyquist frequency (half of the sampling rate)
-                time_data = self.df['time'].values.astype(float)
+                time_data = self.feature_widget.current_log['time'].values.astype(float)
                 if time_data.max() > 1e6:
                     time_data = time_data / 1_000_000.0
                 elif time_data.max() > 1e3:
                     time_data = time_data / 1_000.0
                 time_data = time_data - time_data.min()
-                
                 # Calculate sampling rate and Nyquist frequency
                 dt = np.mean(np.diff(time_data))
                 fs = 1.0 / dt if dt > 0 else 0.0
                 nyquist_freq = fs / 2.0
-                
                 # Round up to the nearest 50Hz for cleaner display
                 max_freq = int(min(1000, nyquist_freq))
                 if max_freq % 50 != 0:
                     max_freq = ((max_freq // 50) + 1) * 50
-                
                 # Force a complete refresh of the plots
                 self.frequency_analyzer_widget.clear_all_plots()
                 # Update with new data, using the calculated max frequency
-                self.frequency_analyzer_widget.update_frequency_plots(self.df, max_freq=max_freq)
+                self.frequency_analyzer_widget.update_frequency_plots(self.feature_widget.current_log, max_freq=max_freq)
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to update frequency plots: {str(e)}")
 
@@ -445,3 +481,95 @@ class FL1GHTViewer(QWidget):
             self.feature_widget.legend_group.setVisible(False)
             # No longer auto-update frequency analyzer plots
             # Let user click "Show Plot" button instead 
+
+    def plot_multiple_logs(self):
+        """Plot multiple selected logs together"""
+        # Only implement multi-plotting for Time Domain tab for now
+        current_tab = self.tab_widget.currentIndex()
+        if current_tab == 0:  # Time Domain
+            try:
+                self.control_widget.progress_bar.setVisible(True)
+                
+                # Get selected features from the feature widget
+                selected_features = self.feature_widget.get_selected_features()
+                if not selected_features:
+                    QMessageBox.warning(self, "Warning", "Please select at least one feature to plot.")
+                    self.control_widget.progress_bar.setVisible(False)
+                    return
+                
+                # Get the current line width from feature widget
+                line_width = getattr(self.feature_widget, 'current_line_width', 1.0)
+                
+                # First clear all charts
+                self.chart_manager.clear_all_charts()
+                
+                # Plot each selected log with a different line style/pattern
+                num_logs = len(self.feature_widget.selected_logs)
+                for i, log_name in enumerate(self.feature_widget.selected_logs):
+                    if log_name in self.feature_widget.loaded_logs:
+                        log_df = self.feature_widget.loaded_logs[log_name]
+                        
+                        # Update progress bar
+                        progress = int(((i + 1) / num_logs) * 100)
+                        self.control_widget.progress_bar.setValue(progress)
+                        
+                        # Rename columns to include log name to avoid conflicts in legend
+                        renamed_df = log_df.copy()
+                        for feature in selected_features:
+                            if feature in renamed_df.columns:
+                                # Add a suffix to help identify in the legend
+                                renamed_df.rename(columns={feature: f"{feature} [{log_name}]"}, inplace=True)
+                        
+                        # Get renamed column names
+                        renamed_features = []
+                        for feature in selected_features:
+                            renamed_feature = f"{feature} [{log_name}]"
+                            if renamed_feature in renamed_df.columns:
+                                renamed_features.append(renamed_feature)
+                            elif feature in renamed_df.columns:  # Fallback if rename failed
+                                renamed_features.append(feature)
+                        
+                        # Plot the renamed features
+                        self.chart_manager.plot_features(
+                            renamed_df, 
+                            renamed_features, 
+                            self.control_widget.progress_bar,
+                            line_width=line_width,
+                            clear_charts=False,  # Don't clear between logs
+                            log_name=log_name
+                        )
+                
+                self.control_widget.progress_bar.setValue(100)
+                self.control_widget.progress_bar.setVisible(False)
+                
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to plot multiple logs: {str(e)}")
+                self.control_widget.progress_bar.setVisible(False)
+        else:
+            QMessageBox.information(self, "Info", "Multi-log plotting is currently not available for this tab.") 
+
+    def plot_multiple_logs_spectral(self):
+        """Plot spectra for multiple selected logs in the Spectral Analysis tab."""
+        try:
+            # Get selected features from the feature widget
+            selected_features = self.feature_widget.get_selected_features()
+            if not selected_features:
+                QMessageBox.warning(self, "Warning", "Please select at least one feature to plot.")
+                return
+            # For each selected log, plot its spectrum
+            for idx, log_name in enumerate(self.feature_widget.selected_logs):
+                if log_name in self.feature_widget.loaded_logs:
+                    df = self.feature_widget.loaded_logs[log_name]
+                    # Use the existing update_spectrum but pass a label/log_name for legend
+                    self.spectral_widget.update_spectrum(df, log_label=log_name, clear_charts=(idx==0))
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to plot multiple spectra: {str(e)}")
+
+    def plot_multiple_logs_step_response(self):
+        """Plot step response for multiple selected logs in the Step Response tab."""
+        line_width = getattr(self.feature_widget, 'current_line_width', 1.0)
+        for idx, log_name in enumerate(self.feature_widget.selected_logs):
+            if log_name in self.feature_widget.loaded_logs:
+                df = self.feature_widget.loaded_logs[log_name]
+                clear_charts = (idx == 0)
+                self.step_response_widget.update_step_response(df, line_width=line_width, log_name=log_name, clear_charts=clear_charts) 

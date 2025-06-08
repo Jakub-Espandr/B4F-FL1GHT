@@ -129,7 +129,7 @@ class ChartManager:
                 chart_view.chart().removeAxis(axis)
             # Single axis for both throttle and motors
             axis_y = QValueAxis()
-            axis_y.setRange(0, 2000)
+            axis_y.setRange(0, 2050)  # Set range from 0 to 2050
             axis_y.setTitleText("Throttle & Motors")
             axis_y.setTitleVisible(True)
             axis_y.setLabelsVisible(True)
@@ -213,8 +213,26 @@ class ChartManager:
                         axis.setTickCount(int((rounded_max - time_min) / 5) + 1)
                         chart_view.chart().update()
 
-    def plot_features(self, df, selected_features, progress_bar=None, line_width=1.0):
-        """Plot selected features and directly update legend (like SpectralAnalyzerWidget)."""
+    def clear_all_charts(self):
+        """Clear all charts in preparation for multi-log plotting"""
+        for chart_view in self.chart_views:
+            if chart_view.chart():
+                for series in chart_view.chart().series():
+                    chart_view.chart().removeSeries(series)
+                    series.deleteLater()
+                chart_view.chart().update()
+
+    def plot_features(self, df, selected_features, progress_bar=None, line_width=1.0, clear_charts=True, log_name=None):
+        """Plot selected features and directly update legend (like SpectralAnalyzerWidget).
+        
+        Args:
+            df: The dataframe containing the data to plot
+            selected_features: List of column names to plot
+            progress_bar: Optional progress bar to update
+            line_width: Width of the lines to plot
+            clear_charts: Whether to clear charts before plotting (set to False for multi-log plotting)
+            log_name: Optional log name to add to the legend for multi-log plotting
+        """
         if not selected_features:
             return
             
@@ -291,6 +309,16 @@ class ChartManager:
         
         # Second pass: actually plot the data
         for i, chart_view in enumerate(self.chart_views):
+            # For multi-log plotting, we need to keep existing series
+            if clear_charts:
+                # Clear existing series
+                for series in chart_view.chart().series():
+                    # Don't remove the zero reference line for Roll, Pitch, Yaw
+                    if chart_view.chart().title() in ["Roll", "Pitch", "Yaw"] and series.name() == "Zero":
+                        continue
+                    chart_view.chart().removeSeries(series)
+                    series.deleteLater()
+            
             axis_series = []
             for feature in selected_features:
                 if feature not in df.columns:
@@ -306,8 +334,14 @@ class ChartManager:
                        (i == 2 and 'yaw' in feature.lower()):
                         # Apply data reduction here for better performance
                         reduced_time, reduced_values = decimate_data(time_data, df[feature].values)
+                        # For multi-log plotting, add log name to display name if provided
+                        display_name = feature
+                        if log_name:
+                            # If the feature already has the log name in it, don't add it again
+                            if log_name not in feature:
+                                display_name = f"{feature} [{log_name}]"
                         axis_series.append({
-                            'name': feature,
+                            'name': display_name,
                             'time': reduced_time,
                             'values': reduced_values
                         })
@@ -316,19 +350,59 @@ class ChartManager:
                        'throttle' in feature.lower() or 'rccommand[3]' in feature.lower():
                         # Apply data reduction here for better performance
                         reduced_time, reduced_values = decimate_data(time_data, df[feature].values)
+                        # For multi-log plotting, add log name to display name if provided
+                        display_name = feature
+                        if log_name:
+                            # If the feature already has the log name in it, don't add it again
+                            if log_name not in feature:
+                                display_name = f"{feature} [{log_name}]"
                         axis_series.append({
-                            'name': feature,
+                            'name': display_name,
                             'time': reduced_time,
                             'values': reduced_values
                         })
             
-            # Use custom Y-axis limits based on chart type
-            if i < 3:  # Roll, Pitch, Yaw - use symmetric values
-                added_series = self.update_chart(chart_view, axis_series, time_data.min(), time_data.max(), 
-                                           y_min=rpy_min, y_max=rpy_max, line_width=line_width)
-            else:  # Throttle - use 0 to 2000
-                added_series = self.update_chart(chart_view, axis_series, time_data.min(), time_data.max(),
-                                           y_min=0, y_max=2000, line_width=line_width)
+            # For multi-log plotting, don't update the axes if we're not clearing
+            if clear_charts or len(chart_view.chart().series()) == 0:
+                # Use custom Y-axis limits based on chart type
+                if i < 3:  # Roll, Pitch, Yaw - use symmetric values
+                    added_series = self.update_chart(chart_view, axis_series, time_data.min(), time_data.max(), 
+                                               y_min=rpy_min, y_max=rpy_max, line_width=line_width)
+                else:  # Throttle - use 0 to 2050
+                    added_series = self.update_chart(chart_view, axis_series, time_data.min(), time_data.max(),
+                                               y_min=0, y_max=2050, line_width=line_width)
+            else:
+                # Just add the series to the existing chart
+                added_series = []
+                for data in axis_series:
+                    series = QLineSeries()
+                    # Set name to clean name for legend and chart
+                    clean_name = get_clean_name(data['name'])
+                    series.setName(clean_name)
+
+                    # Set color based on the type of data using get_clean_name
+                    color_key = clean_name
+                    if color_key.startswith('Motor'):
+                        try:
+                            motor_num = int(color_key.split(' ')[1])
+                            color = QColor(*MOTOR_COLORS[motor_num % len(MOTOR_COLORS)])
+                        except Exception:
+                            color = QColor(*COLOR_PALETTE.get(color_key, (128, 128, 128)))
+                    else:
+                        color = QColor(*COLOR_PALETTE.get(color_key, (128, 128, 128)))
+
+                    pen = series.pen()
+                    pen.setColor(color)
+                    pen.setWidthF(line_width)  # Only user data series get the custom line width
+                    series.setPen(pen)
+
+                    for t, v in zip(data['time'], data['values']):
+                        series.append(t, v)
+
+                    chart_view.chart().addSeries(series)
+                    series.attachAxis(chart_view.chart().axes(Qt.Horizontal)[0])
+                    series.attachAxis(chart_view.chart().axes(Qt.Vertical)[0])
+                    added_series.append(series)
             
             # Track what was plotted for the legend
             for data, series in zip(axis_series, added_series):
@@ -360,7 +434,7 @@ class ChartManager:
             
         # Update the legend using the feature_widget's update_legend method
         if self.parent and hasattr(self.parent, 'feature_widget'):
-            self.parent.feature_widget.update_legend(series_by_category) 
+            self.parent.feature_widget.update_legend(series_by_category)
 
     def show_tooltip(self, event, chart_view):
         """Show tooltip with time and value information"""

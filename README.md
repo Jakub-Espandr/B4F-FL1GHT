@@ -29,6 +29,9 @@ A modern, feature-rich blackbox log viewer for FPV drone flight data analysis. D
 - **Responsive and Lightweight**
   - Built with PySide6 for fast, efficient rendering
   - Minimal dependencies
+- **Multi-Log Support**
+  - Load and select multiple logs for analysis
+  - Plot multiple logs simultaneously in Spectral Analysis and Step Response tabs
 
 ---
 

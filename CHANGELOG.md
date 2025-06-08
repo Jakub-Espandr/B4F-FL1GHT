@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.2] - 2025-06-08
+
+### Added
+- Multi-log loading and selection:
+  - Load and display multiple logs in a list
+  - Select one or more logs for plotting
+  - Multi-selection and single-selection UI modes
+- Multi-log plotting:
+  - Plot multiple logs at once in Spectral Analysis and Step Response tabs
+
+### Improved
+- UI/UX:
+  - More compact log selector (combo box for single selection)
+  - Space-efficient and modern layout
+- Plot clearing:
+  - All plots and annotation labels are cleared before plotting new data to prevent caching/overlays
+- Annotation management:
+  - Robust handling to prevent crashes and segmentation faults
+
+### Fixed
+- Prevented double-attaching axes ("Axis already attached to series" warning)
+- Safely deleted annotation proxies and handled signal disconnects
+- Removed debug print statements
+- Various segmentation faults and warnings addressed
+
+---
+
 ## [0.4.1] - 2025-06-08
 
 ### Added
@@ -21,7 +48,7 @@ All notable changes to this project will be documented in this file.
   - Timestamped filenames for easy organization
   - "Return to Previous Tab" functionality
 
-  ---
+---
 
 ## [0.4.0] - 2025-06-07
 

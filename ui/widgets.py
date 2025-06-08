@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFileDialog,
     QCheckBox, QLabel, QMessageBox, QGroupBox, QScrollArea,
     QSlider, QProgressBar, QSizePolicy, QComboBox, QToolTip, QGridLayout, QSpinBox,
-    QDialog, QLineEdit
+    QDialog, QLineEdit, QListWidget
 )
 from PySide6.QtGui import QFont, QColor, QPainter, QPen, QIcon
 from PySide6.QtCore import Qt, QMargins, QTimer
@@ -37,6 +37,9 @@ class FeatureSelectionWidget(QWidget):
         self.author_name = ""  # Default author name
         self.drone_name = ""  # Default drone name
         self.use_drone_in_filename = False
+        self.loaded_logs = {}  # Dictionary to store loaded logs {filename: dataframe}
+        self.current_log = None  # Currently selected log
+        self.selected_logs = []  # List of selected logs for multi-plotting
         # Set default export directory to app_dir/export
         app_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
         default_export_dir = os.path.join(app_dir, "export")
@@ -76,11 +79,71 @@ class FeatureSelectionWidget(QWidget):
         file_controls.addWidget(self.file_label)
 
         # File selection button
-        self.select_button = QPushButton("Select File")
+        self.select_button = QPushButton("Select File(s)")
         self.select_button.setFont(self.create_font('button'))
         file_controls.addWidget(self.select_button)
 
-        # Plot button
+        # Add loaded logs combo box
+        logs_label = QLabel("Loaded Logs:")
+        logs_label.setFont(self.create_font('label'))
+        file_controls.addWidget(logs_label)
+
+        # Create logs list widget for multi-selection but make it smaller
+        self.logs_list = QListWidget()
+        self.logs_list.setFont(self.create_font('label'))
+        self.logs_list.setSelectionMode(QListWidget.ExtendedSelection)
+        self.logs_list.setStyleSheet("""
+            QListWidget {
+                background-color: #2d2d2d;
+                border: 1px solid #3a3a3a;
+                border-radius: 5px;
+                padding: 5px;
+                color: white;
+                min-height: 50px;
+                max-height: 80px;
+            }
+            QListWidget::item {
+                border: none;
+                padding: 2px;
+                min-height: 20px;
+            }
+            QListWidget::item:selected {
+                background-color: #4d4d4d;
+                border: none;
+            }
+            QListWidget::item:hover {
+                background-color: #3a3a3a;
+                border: none;
+            }
+            QScrollBar:vertical {
+                background: #232323;
+                width: 16px;
+                margin: 0px 0px 0px 0px;
+                border-radius: 8px;
+            }
+            QScrollBar::handle:vertical {
+                background: #888888;
+                min-height: 24px;
+                border-radius: 8px;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                background: none;
+                height: 0px;
+            }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: none;
+            }
+        """)
+        self.logs_list.itemSelectionChanged.connect(self.on_logs_selection_changed)
+        file_controls.addWidget(self.logs_list)
+
+        # Keep the single log combo for compatibility but hide it
+        self.logs_combo = QComboBox()
+        self.logs_combo.setVisible(False)
+        self.logs_combo.currentIndexChanged.connect(self.on_log_selected)
+        file_controls.addWidget(self.logs_combo)
+
+        # Plot button - single button for both single and multi-log plotting
         self.plot_button = QPushButton("Show Plot")
         self.plot_button.setFont(self.create_font('button'))
         # Set neon style for plot button
@@ -305,9 +368,14 @@ class FeatureSelectionWidget(QWidget):
         # If empty, exit early
         if not series_by_category:
             return
-        
+            
         # Add new legend items (sorted alphabetically for consistent display)
         for legend_label in sorted(series_by_category.keys()):
+            # Special handling for motors
+            if legend_label.startswith('Motor'):
+                # Skip individual motor entries as they'll be handled separately
+                continue
+                
             legend_label_widget = QLabel()
             legend_label_widget.setFont(self.create_font('label'))
 
@@ -318,14 +386,7 @@ class FeatureSelectionWidget(QWidget):
                 color_name = color_value
             else:
                 # Need to determine color from name
-                if legend_label.startswith('Motor'):
-                    try:
-                        motor_num = int(legend_label.split(' ')[1])
-                        color = QColor(*MOTOR_COLORS[motor_num % len(MOTOR_COLORS)])
-                    except Exception:
-                        color = QColor(*COLOR_PALETTE.get(legend_label, (128, 128, 128)))
-                else:
-                    color = QColor(*COLOR_PALETTE.get(legend_label, (128, 128, 128)))
+                color = QColor(*COLOR_PALETTE.get(legend_label, (128, 128, 128)))
                 color_name = color.name()
 
             # Create a colored dot/square and the label text
@@ -333,6 +394,51 @@ class FeatureSelectionWidget(QWidget):
             # Remove any background color from the label
             legend_label_widget.setStyleSheet("background: none;")
             self.legend_layout.addWidget(legend_label_widget)
+            
+        # Handle motors separately
+        motor_entries = [(label, color) for label, color in series_by_category.items() if label.startswith('Motor')]
+        if motor_entries:
+            # Add "Motors:" label
+            motor_label = QLabel("Motors:")
+            motor_label.setFont(self.create_font('label'))
+            motor_label.setStyleSheet("background: transparent;")
+            self.legend_layout.addWidget(motor_label)
+            
+            # Group motors by 4
+            for i in range(0, len(motor_entries), 4):
+                # Create a row for up to 4 motors
+                row_widget = QWidget()
+                row_widget.setStyleSheet("background: transparent;")
+                row_layout = QHBoxLayout(row_widget)
+                row_layout.setSpacing(10)
+                row_layout.setContentsMargins(0, 0, 0, 0)
+                
+                # Add up to 4 motors in this row
+                for j in range(4):
+                    if i + j < len(motor_entries):
+                        label, color_value = motor_entries[i + j]
+                        # Extract motor number (1-based)
+                        try:
+                            motor_num = int(label.split(' ')[1]) + 1
+                        except:
+                            motor_num = i + j + 1
+                        # Create a colored dot
+                        dot_label = QLabel("●")
+                        if isinstance(color_value, str) and color_value.startswith('#'):
+                            color_name = color_value
+                        else:
+                            color = QColor(*MOTOR_COLORS[(motor_num-1) % len(MOTOR_COLORS)])
+                            color_name = color.name()
+                        dot_label.setStyleSheet("color: %s; font-size: 14px; background: transparent;" % color_name)
+                        # Add motor number
+                        motor_num_label = QLabel(f"{motor_num}")
+                        motor_num_label.setFont(self.create_font('label'))
+                        motor_num_label.setStyleSheet("background: transparent;")
+                        # Add dot and number to row
+                        row_layout.addWidget(dot_label)
+                        row_layout.addWidget(motor_num_label)
+                row_layout.addStretch()
+                self.legend_layout.addWidget(row_widget)
 
     def line_width_changed(self, value):
         """Update line width for all series in all charts"""
@@ -435,7 +541,7 @@ class FeatureSelectionWidget(QWidget):
         for checkbox in all_checkboxes:
             try:
                 checkbox.stateChanged.disconnect()
-            except:
+            except TypeError:
                 pass
         # Do NOT reconnect stateChanged to notify_parent_update in time domain mode
         # Only the Show Plot button will trigger plot updates
@@ -524,6 +630,42 @@ class FeatureSelectionWidget(QWidget):
         if hasattr(parent, 'feature_widget') and hasattr(parent.feature_widget, 'use_drone_in_filename'):
             return parent.feature_widget.use_drone_in_filename
         return False
+
+    def on_logs_selection_changed(self):
+        """Handle selection changes in the logs list widget"""
+        selected_items = self.logs_list.selectedItems()
+        self.selected_logs = [item.text() for item in selected_items]
+        
+        # If only one log is selected, update current_log for compatibility
+        if len(self.selected_logs) == 1:
+            self.current_log = self.loaded_logs[self.selected_logs[0]]
+            self.df = self.current_log
+            
+            # Update combo box for compatibility
+            index = self.logs_combo.findText(self.selected_logs[0])
+            if index >= 0:
+                self.logs_combo.setCurrentIndex(index)
+                
+        print(f"Selected logs: {self.selected_logs}")
+
+    def on_log_selected(self, index):
+        """Handle log selection from the combo box"""
+        if index >= 0:  # Check if a valid item is selected
+            filename = self.logs_combo.currentText()
+            if filename in self.loaded_logs:
+                self.current_log = self.loaded_logs[filename]
+                self.df = self.current_log  # Update the dataframe for plotting
+                
+                # Update the logs list selection to match
+                for i in range(self.logs_list.count()):
+                    item = self.logs_list.item(i)
+                    if item.text() == filename:
+                        self.logs_list.setCurrentItem(item)
+                        break
+                
+                # Update the feature widget with the new dataframe
+                if hasattr(self, 'feature_widget'):
+                    self.feature_widget.df = self.df
 
 class ControlWidget(QWidget):
     def __init__(self, parent=None):
@@ -672,7 +814,12 @@ class SpectralAnalyzerWidget(QWidget):
             font.setBold(True)
         return font
 
-    def update_spectrum(self, df):
+    def update_spectrum(self, df, log_label=None, clear_charts=True):
+        # Always clear all series before plotting new spectra (fix caching on smoothing change)
+        if clear_charts:
+            for (chart_view_full, chart_view_zoom) in self.chart_views:
+                chart_view_full.chart().removeAllSeries()
+                chart_view_zoom.chart().removeAllSeries()
         if df is not None:
             self.df = df
         df = self.df
@@ -736,8 +883,6 @@ class SpectralAnalyzerWidget(QWidget):
         for axis_idx, axis_name in enumerate(['Roll', 'Pitch', 'Yaw']):
             chart_full = self.chart_views[axis_idx][0].chart()
             chart_zoom = self.chart_views[axis_idx][1].chart()
-            chart_full.removeAllSeries()
-            chart_zoom.removeAllSeries()
             chart_full.legend().setVisible(False)
             chart_zoom.legend().setVisible(False)
             series_list = []
@@ -754,7 +899,11 @@ class SpectralAnalyzerWidget(QWidget):
                     psd_db = 10 * np.log10(psd + 1e-10)
                     # Full range series
                     series_full = QLineSeries()
-                    series_full.setName(label)
+                    # Add log label to series name if provided
+                    series_name = label
+                    if log_label:
+                        series_name = f"{label} ({log_label})"
+                    series_full.setName(series_name)
                     for f, p in zip(freqs, psd_db):
                         series_full.append(f, p)
                     pen = series_full.pen()
@@ -764,7 +913,7 @@ class SpectralAnalyzerWidget(QWidget):
                     chart_full.addSeries(series_full)
                     # Zoomed series (0-100 Hz)
                     series_zoom = QLineSeries()
-                    series_zoom.setName(label)
+                    series_zoom.setName(series_name)
                     for f, p in zip(freqs, psd_db):
                         if f <= 100:
                             series_zoom.append(f, p)
@@ -774,6 +923,7 @@ class SpectralAnalyzerWidget(QWidget):
                     series_zoom.setPen(pen_zoom)
                     chart_zoom.addSeries(series_zoom)
                     series_list.append(series_full)
+                    # For the legend, only use the feature name (label), not the log name
                     legend_labels.add((label, color.name()))
                     plotted_types.add(t)
             # Axes for full range
@@ -833,14 +983,12 @@ class SpectralAnalyzerWidget(QWidget):
                 if item.widget():
                     item.widget().deleteLater()
             # Only show legend entries for types that were actually plotted
-            for t in selected_types:
-                if t in plotted_types:
-                    pattern, label, color = type_to_pattern[t]
-                    legend_label = QLabel()
-                    legend_label.setFont(self.create_font('label'))
-                    legend_label.setText(f"<span style='color: {color.name()}'>●</span> {label}")
-                    legend_label.setStyleSheet("background: none;")
-                    legend_layout.addWidget(legend_label)
+            for label, color_name in legend_labels:
+                legend_label = QLabel()
+                legend_label.setFont(self.create_font('label'))
+                legend_label.setText(f"<span style='color: {color_name}'>●</span> {label}")
+                legend_label.setStyleSheet("background: none;")
+                legend_layout.addWidget(legend_label)
 
     def show_tooltip(self, event, chart_view):
         chart = chart_view.chart()
@@ -971,57 +1119,84 @@ class StepResponseWidget(QWidget):
             charts_layout.addWidget(chart_view)
         layout.addWidget(self.charts_container)
 
-    def update_step_response(self, df, line_width=None):
+    def update_step_response(self, df, line_width=None, log_name=None, clear_charts=True):
         if df is None or df.empty:
             print('[StepResponseWidget] DataFrame is empty or None.')
             return
         self.df = df
         axes_names = ['roll', 'pitch', 'yaw']
-        # Get log name from the main viewer
-        log_name = "Log"
-        parent = self.parent()
-        while parent is not None and not hasattr(parent, 'current_file'):
-            parent = parent.parent()
-        if parent and hasattr(parent, 'current_file') and parent.current_file:
-            log_name = os.path.basename(parent.current_file)
+        # Only clear all series and annotation labels if clear_charts is True
+        if clear_charts:
+            for chart_view in self.chart_views:
+                chart = chart_view.chart()
+                chart.removeAllSeries()
+                if hasattr(chart_view, '_annotation_labels'):
+                    for label_proxy in chart_view._annotation_labels:
+                        try:
+                            if label_proxy is not None:
+                                label_proxy.deleteLater()
+                        except Exception:
+                            pass
+                    chart_view._annotation_labels = []
+                else:
+                    chart_view._annotation_labels = []
+        # Use provided log_name or fallback to old method
+        if log_name is None:
+            log_name = "Log"
+            parent = self.parent()
+            while parent is not None and not hasattr(parent, 'current_file'):
+                parent = parent.parent()
+            if parent and hasattr(parent, 'current_file') and parent.current_file:
+                log_name = os.path.basename(parent.current_file)
+        # Optional: Decimate data for speed if very large
+        if len(df) > 20000:
+            df = df.iloc[::2].reset_index(drop=True)
         for i, axis_name in enumerate(axes_names):
             chart_view = self.charts_container.layout().itemAt(i).widget() if hasattr(self, 'charts_container') else self.chart_views[i]
             chart = chart_view.chart()
-            chart.removeAllSeries()
-            chart.legend().setVisible(False)  # Hide legend
-            chart.setTitle(f"{axis_name.capitalize()} Step Response")
-            # Remove all existing axes before adding new ones
-            for axis in chart.axes():
-                chart.removeAxis(axis)
-            # Set up axes
-            axis_x = QValueAxis()
-            axis_x.setTitleText('Time (ms)')
-            axis_x.setRange(0, 500)
-            axis_x.setLabelFormat('%d')
-            axis_x.setTickCount(6)
-            axis_x.setTitleVisible(True)
-            axis_x.setLabelsVisible(True)
-            axis_x.setGridLineVisible(True)
-            axis_x.setLinePenColor(Qt.black)
-            axis_x.setLabelsColor(Qt.black)
-            axis_x.setTitleFont(self.create_font('label'))
-            axis_x.setLabelsFont(self.create_font('label'))
-            # Use QCategoryAxis for Y axis to guarantee ticks at 0, 0.25, ..., 1.75
-            axis_y = QCategoryAxis()
-            axis_y.setTitleText('Response')
-            axis_y.setRange(0., 1.75)
-            axis_y.setLabelsPosition(QCategoryAxis.AxisLabelsPositionOnValue)
-            for v in [0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75]:
-                axis_y.append(f'{v:.2f}', v)
-            axis_y.setTitleVisible(True)
-            axis_y.setLabelsVisible(True)
-            axis_y.setGridLineVisible(True)
-            axis_y.setLinePenColor(Qt.black)
-            axis_y.setLabelsColor(Qt.black)
-            axis_y.setTitleFont(self.create_font('label'))
-            axis_y.setLabelsFont(self.create_font('label'))
-            chart.addAxis(axis_x, Qt.AlignBottom)
-            chart.addAxis(axis_y, Qt.AlignLeft)
+            if clear_charts:
+                chart.legend().setVisible(False)  # Hide legend
+                chart.setTitle(f"{axis_name.capitalize()} Step Response")
+                # Remove all existing axes before adding new ones (only if clear_charts)
+                for axis in chart.axes():
+                    chart.removeAxis(axis)
+                # Set up axes
+                axis_x = QValueAxis()
+                axis_x.setTitleText('Time (ms)')
+                axis_x.setRange(0, 500)
+                axis_x.setLabelFormat('%d')
+                axis_x.setTickCount(6)
+                axis_x.setTitleVisible(True)
+                axis_x.setLabelsVisible(True)
+                axis_x.setGridLineVisible(True)
+                axis_x.setLinePenColor(Qt.black)
+                axis_x.setLabelsColor(Qt.black)
+                axis_x.setTitleFont(self.create_font('label'))
+                axis_x.setLabelsFont(self.create_font('label'))
+                # Use QCategoryAxis for Y axis to guarantee ticks at 0, 0.25, ..., 1.75
+                axis_y = QCategoryAxis()
+                axis_y.setTitleText('Response')
+                axis_y.setRange(0., 1.75)
+                axis_y.setLabelsPosition(QCategoryAxis.AxisLabelsPositionOnValue)
+                for v in [0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75]:
+                    axis_y.append(f'{v:.2f}', v)
+                axis_y.setTitleVisible(True)
+                axis_y.setLabelsVisible(True)
+                axis_y.setGridLineVisible(True)
+                axis_y.setLinePenColor(Qt.black)
+                axis_y.setLabelsColor(Qt.black)
+                axis_y.setTitleFont(self.create_font('label'))
+                axis_y.setLabelsFont(self.create_font('label'))
+                chart.addAxis(axis_x, Qt.AlignBottom)
+                chart.addAxis(axis_y, Qt.AlignLeft)
+                chart_view._step_axis_x = axis_x
+                chart_view._step_axis_y = axis_y
+            else:
+                axis_x = getattr(chart_view, '_step_axis_x', None)
+                axis_y = getattr(chart_view, '_step_axis_y', None)
+                if axis_x is None or axis_y is None:
+                    continue
+
             # Find columns
             gyro_col = f'gyroADC[{i}] (deg/s)'
             p_err_col = f'axisP[{i}]'
@@ -1032,6 +1207,7 @@ class StepResponseWidget(QWidget):
                 if pid_col:
                     pid_val = df[pid_col[0]].iloc[0]
                     break
+
             if gyro_col in df.columns and p_err_col in df.columns and throttle_col in df.columns:
                 time = df['time'].values
                 gyro = df[gyro_col].values
@@ -1052,21 +1228,24 @@ class StepResponseWidget(QWidget):
                 trace = StepTrace(axis_data)
                 t = trace.time_resp
                 mean, std, _ = trace.resp_low
-                t_ms = [float(x) * 1000 for x in t]
-                t_ms = [x - t_ms[0] for x in t_ms]  # Ensure starts at 0
+
                 # Reference line at y=1.0 (add first, so it's behind the data)
-                if t_ms and len(t_ms) > 1:
+                if clear_charts and len(t) > 1:
                     ref_line = QLineSeries()
-                    ref_line.append(t_ms[0], 1.0)
-                    ref_line.append(t_ms[-1], 1.0)
+                    ref_line.append(0, 1.0)
+                    ref_line.append(500, 1.0)
                     ref_pen = QPen(Qt.black)
                     ref_pen.setWidthF(1.7)
                     ref_line.setPen(ref_pen)
                     chart.addSeries(ref_line)
-                    ref_line.attachAxis(axis_x)
-                    ref_line.attachAxis(axis_y)
+                    # Prevent double-attaching axes
+                    if axis_x not in ref_line.attachedAxes():
+                        ref_line.attachAxis(axis_x)
+                    if axis_y not in ref_line.attachedAxes():
+                        ref_line.attachAxis(axis_y)
                     for marker in chart.legend().markers(ref_line):
                         marker.setVisible(False)
+
                 # Step response mean line (add after, so it's on top)
                 color = QColor(*COLOR_PALETTE.get('Gyro (filtered)', (0, 255, 255)))
                 series = QLineSeries()
@@ -1081,8 +1260,11 @@ class StepResponseWidget(QWidget):
                 pen.setWidthF(line_width if line_width is not None else 1.5)
                 series.setPen(pen)
                 chart.addSeries(series)
-                series.attachAxis(axis_x)
-                series.attachAxis(axis_y)
+                # Prevent double-attaching axes
+                if axis_x not in series.attachedAxes():
+                    series.attachAxis(axis_x)
+                if axis_y not in series.attachedAxes():
+                    series.attachAxis(axis_y)
                 # Legend: PID values
                 if pid_val and pid_val != 'N/A':
                     try:
@@ -1093,29 +1275,26 @@ class StepResponseWidget(QWidget):
                 else:
                     pid_text = "PID: N/A"
                 chart.legend().markers(series)[0].setLabel(f"{log_name}\n{pid_text}")
-            else:
-                chart.setTitle(f'{axis_name.capitalize()} Step Response (missing data)')
-            chart.setBackgroundBrush(Qt.white)
-            chart.setPlotAreaBackgroundBrush(Qt.white)
-            chart.setPlotAreaBackgroundVisible(True)
-            chart.legend().setVisible(True)
-            chart.legend().setLabelColor(Qt.black)
-            chart.legend().setFont(QFont("Arial", 9))
-            chart.update()
-            # Compute max Y and time to reach 0.5 (in ms)
-            max_y = float(np.max(mean))
-            max_idx = int(np.argmax(mean))
-            max_t = float(t_ms[max_idx]) if max_idx < len(t_ms) else 0.0
-            t_05 = next((float(ti) for ti, yi in zip(t_ms, mean) if yi >= 0.5), None)
-            # Prepare annotation text in ms
-            annotation = f"Max: {max_y:.2f} at t={max_t:.0f}ms  Response: {t_05:.0f}ms" if t_05 is not None else f"Max: {max_y:.2f} at t={max_t:.0f}ms  Response: N/A"
-            # Add annotation as a label in the top-right (move more left and down)
-            label = QLabel(annotation)
-            label.setStyleSheet("background: rgba(255,255,255,0.8); color: black; font-size: 11px; padding: 2px;")
-            label.setAlignment(Qt.AlignRight | Qt.AlignTop)
-            proxy = chart_view.scene().addWidget(label)
-            proxy.setZValue(100)
-            proxy.setPos(chart_view.width() - 300, 30)
+                # Only add annotation for the first log (clear_charts=True)
+                if clear_charts:
+                    chart.legend().setVisible(True)
+                    chart.legend().setLabelColor(Qt.black)
+                    chart.legend().setFont(QFont("Arial", 9))
+                    chart.update()
+                    # Compute max Y and time to reach 0.5 (in ms)
+                    max_y = float(np.max(mean))
+                    max_idx = int(np.argmax(mean))
+                    max_t = float(t_ms[max_idx]) if max_idx < len(t_ms) else 0.0
+                    t_05 = next((float(ti) for ti, yi in zip(t_ms, mean) if yi >= 0.5), None)
+                    # Prepare annotation text in ms
+                    annotation = f"Max: {max_y:.2f} at t={max_t:.0f}ms  Response: {t_05:.0f}ms" if t_05 is not None else f"Max: {max_y:.2f} at t={max_t:.0f}ms  Response: N/A"
+                    label = QLabel(annotation)
+                    label.setStyleSheet("background: rgba(255,255,255,0.8); color: black; font-size: 11px; padding: 2px;")
+                    label.setAlignment(Qt.AlignRight | Qt.AlignTop)
+                    proxy = chart_view.scene().addWidget(label)
+                    proxy.setZValue(100)
+                    proxy.setPos(chart_view.width() - 300, 30)
+                    chart_view._annotation_labels.append(proxy)
 
     def show_tooltip(self, event, chart_view):
         chart = chart_view.chart()
@@ -1201,6 +1380,21 @@ class StepResponseWidget(QWidget):
             QToolTip.showText(event.globalPos(), tooltip, chart_view)
         else:
             QToolTip.hideText()
+
+    def clear_all_charts_and_annotations(self):
+        for chart_view in self.chart_views:
+            chart = chart_view.chart()
+            chart.removeAllSeries()
+            if hasattr(chart_view, '_annotation_labels'):
+                for label_proxy in chart_view._annotation_labels:
+                    try:
+                        if label_proxy is not None:
+                            label_proxy.deleteLater()
+                    except Exception:
+                        pass
+                chart_view._annotation_labels = []
+            else:
+                chart_view._annotation_labels = []
 
 class FrequencyAnalyzerWidget(QWidget):
     def __init__(self, feature_widget, parent=None):
