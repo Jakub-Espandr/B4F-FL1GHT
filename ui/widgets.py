@@ -11,8 +11,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QFont, QColor, QPainter, QPen, QIcon
 from PySide6.QtCore import Qt, QMargins, QTimer
-from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis, QAreaSeries, QCategoryAxis
-from utils.config import FONT_CONFIG, COLOR_PALETTE, MOTOR_COLORS
+from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis, QAreaSeries, QCategoryAxis, QLegend
+from utils.config import FONT_CONFIG, COLOR_PALETTE, MOTOR_COLORS, ALTERNATIVE_COLOR_PALETTE
 from utils.data_processor import get_clean_name
 import numpy as np
 import matplotlib.pyplot as plt
@@ -870,6 +870,7 @@ class SpectralAnalyzerWidget(QWidget):
         self.df = None
         self.feature_widget = feature_widget
         self.setup_ui()
+        self.log_count = 0  # Track number of logs plotted
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -958,6 +959,13 @@ class SpectralAnalyzerWidget(QWidget):
             for (chart_view_full, chart_view_zoom) in self.chart_views:
                 chart_view_full.chart().removeAllSeries()
                 chart_view_zoom.chart().removeAllSeries()
+            self.log_count = 0  # Reset log count when clearing charts
+        else:
+            self.log_count += 1  # Increment log count for additional logs
+            
+        # Determine if we should use alternative colors for second log
+        use_alternative_colors = (self.log_count > 0)
+            
         if df is not None:
             self.df = df
         df = self.df
@@ -991,15 +999,18 @@ class SpectralAnalyzerWidget(QWidget):
             return
         print(f"[SpectralAnalyzer] Selected types: {selected_types}")
 
+        # Select color palette based on whether to use alternative colors
+        color_palette = ALTERNATIVE_COLOR_PALETTE if use_alternative_colors else COLOR_PALETTE
+
         # Map type to column patterns, legend, and color
         type_to_pattern = {
-            'raw': ('gyroUnfilt[{}]', 'Gyro (raw)', QColor(255, 0, 255)),
-            'filtered': ('gyroADC[{}] (deg/s)', 'Gyro (filtered)', QColor(0, 255, 255)),
-            'pterm': ('axisP[{}]', 'P-Term', QColor(255, 200, 0)),
-            'iterm': ('axisI[{}]', 'I-Term', QColor(255, 128, 0)),
-            'dterm': ('axisD[{}]', 'D-Term', QColor(128, 0, 255)),
-            'setpoint': ('setpoint[{}]', 'Setpoint', QColor(0, 0, 0)),
-            'rc': ('rcCommand[{}]', 'RC Command', QColor(128, 128, 0)),
+            'raw': ('gyroUnfilt[{}]', 'Gyro (raw)', QColor(*color_palette.get('Gyro (raw)', (255, 0, 255)))),
+            'filtered': ('gyroADC[{}] (deg/s)', 'Gyro (filtered)', QColor(*color_palette.get('Gyro (filtered)', (0, 255, 255)))),
+            'pterm': ('axisP[{}]', 'P-Term', QColor(*color_palette.get('P-Term', (255, 200, 0)))),
+            'iterm': ('axisI[{}]', 'I-Term', QColor(*color_palette.get('I-Term', (255, 128, 0)))),
+            'dterm': ('axisD[{}]', 'D-Term', QColor(*color_palette.get('D-Term', (128, 0, 255)))),
+            'setpoint': ('setpoint[{}]', 'Setpoint', QColor(*color_palette.get('Setpoint', (0, 0, 0)))),
+            'rc': ('rcCommand[{}]', 'RC Command', QColor(*color_palette.get('RC Command', (128, 128, 0)))),
         }
         axis_names = ['Roll', 'Pitch', 'Yaw']
         axis_indices = [0, 1, 2]
@@ -1040,7 +1051,7 @@ class SpectralAnalyzerWidget(QWidget):
                     # Add log label to series name if provided
                     series_name = label
                     if log_label:
-                        series_name = f"{label} ({log_label})"
+                        series_name = f"{label} [{log_label}]"
                     series_full.setName(series_name)
                     for f, p in zip(freqs, psd_db):
                         series_full.append(f, p)
@@ -1061,8 +1072,11 @@ class SpectralAnalyzerWidget(QWidget):
                     series_zoom.setPen(pen_zoom)
                     chart_zoom.addSeries(series_zoom)
                     series_list.append(series_full)
-                    # For the legend, only use the feature name (label), not the log name
-                    legend_labels.add((label, color.name()))
+                    # For the legend, include the log name and label
+                    if log_label:
+                        legend_labels.add((label, color.name(), log_label))
+                    else:
+                        legend_labels.add((label, color.name(), None))
                     plotted_types.add(t)
             # Axes for full range
             chart_full.createDefaultAxes()
@@ -1113,18 +1127,34 @@ class SpectralAnalyzerWidget(QWidget):
                 axis_yz.setRange(-50, 20)
             chart_full.update()
             chart_zoom.update()
+        
         # Update the left legend area (legend_group/legend_layout)
         legend_layout = getattr(self.feature_widget, 'legend_layout', None)
         if legend_layout is not None:
-            while legend_layout.count():
-                item = legend_layout.takeAt(0)
-                if item.widget():
-                    item.widget().deleteLater()
+            # Only clear legend if we're on the first log
+            if clear_charts:
+                while legend_layout.count():
+                    item = legend_layout.takeAt(0)
+                    if item.widget():
+                        item.widget().deleteLater()
+            # Sort legend entries by label then by log_label for consistent display
+            sorted_labels = sorted(legend_labels, key=lambda x: (x[0], str(x[2]) if x[2] else ""))
+            # Determine if we are plotting multiple logs
+            num_logs = getattr(self.feature_widget, 'selected_logs', None)
+            if num_logs is not None and isinstance(num_logs, list):
+                multi_log = len(num_logs) > 1
+            else:
+                multi_log = False
             # Only show legend entries for types that were actually plotted
-            for label, color_name in legend_labels:
+            for label, color_name, log_label in sorted_labels:
                 legend_label = QLabel()
                 legend_label.setFont(self.create_font('label'))
-                legend_label.setText(f"<span style='color: {color_name}'>●</span> {label}")
+                # Add log name to legend label only if multi_log is True
+                if multi_log and log_label:
+                    legend_text = f"<span style='color: {color_name}'>●</span> {label} [{log_label}]"
+                else:
+                    legend_text = f"<span style='color: {color_name}'>●</span> {label}"
+                legend_label.setText(legend_text)
                 legend_label.setStyleSheet("background: none;")
                 legend_layout.addWidget(legend_label)
 
@@ -1257,7 +1287,7 @@ class StepResponseWidget(QWidget):
             charts_layout.addWidget(chart_view)
         layout.addWidget(self.charts_container)
 
-    def update_step_response(self, df, line_width=None, log_name=None, clear_charts=True):
+    def update_step_response(self, df, line_width=None, log_name=None, clear_charts=True, log_index=0):
         if df is None or df.empty:
             print('[StepResponseWidget] DataFrame is empty or None.')
             return
@@ -1289,6 +1319,7 @@ class StepResponseWidget(QWidget):
         # Optional: Decimate data for speed if very large
         if len(df) > 20000:
             df = df.iloc[::2].reset_index(drop=True)
+        from utils.config import MOTOR_COLORS
         for i, axis_name in enumerate(axes_names):
             chart_view = self.charts_container.layout().itemAt(i).widget() if hasattr(self, 'charts_container') else self.chart_views[i]
             chart = chart_view.chart()
@@ -1340,11 +1371,30 @@ class StepResponseWidget(QWidget):
             p_err_col = f'axisP[{i}]'
             throttle_col = 'rcCommand[3]'
             pid_val = None
+            ff_val = None
             for pid_key in [f'{axis_name}pid', f'{axis_name.upper()}PID', f'{axis_name[0]}pid']:
                 pid_col = [col for col in df.columns if pid_key in col.lower()]
                 if pid_col:
                     pid_val = df[pid_col[0]].iloc[0]
                     break
+
+            # Get feed forward value from FF column
+            ff_col = f'{axis_name}FF'
+            if ff_col in df.columns:
+                ff_val = df[ff_col].iloc[0]
+                print(f"[DEBUG] Feed forward value for {axis_name} from {ff_col}: {ff_val}")  # Debug print
+            else:
+                print(f"[DEBUG] Feed forward column {ff_col} not found in DataFrame")  # Debug print
+                ff_val = 0.0
+
+            # Get d_min value from DMin column
+            dmin_col = f'{axis_name}DMin'
+            if dmin_col in df.columns:
+                dmin_val = df[dmin_col].iloc[0]
+                print(f"[DEBUG] d_min value for {axis_name} from {dmin_col}: {dmin_val}")  # Debug print
+            else:
+                print(f"[DEBUG] d_min column {dmin_col} not found in DataFrame")  # Debug print
+                dmin_val = 0.0
 
             if gyro_col in df.columns and p_err_col in df.columns and throttle_col in df.columns:
                 time = df['time'].values
@@ -1385,10 +1435,10 @@ class StepResponseWidget(QWidget):
                         marker.setVisible(False)
 
                 # Step response mean line (add after, so it's on top)
-                color = QColor(*COLOR_PALETTE.get('Gyro (filtered)', (0, 255, 255)))
+                color = QColor(*MOTOR_COLORS[log_index % len(MOTOR_COLORS)])
                 series = QLineSeries()
                 t_ms = [float(x) * 1000 for x in t]
-                t_ms = [x - t_ms[0] for x in t_ms]  # Ensure starts at 0
+                t_ms = [x - t_ms[0] for x in t_ms]
                 mean = list(mean)
                 for x, y in zip(t_ms, mean):
                     series.append(x, y)
@@ -1407,32 +1457,43 @@ class StepResponseWidget(QWidget):
                 if pid_val and pid_val != 'N/A':
                     try:
                         p, i, d = map(float, str(pid_val).split(','))
-                        pid_text = f"{p:.0f}; {i:.0f}; {d:.0f}"
+                        ff = float(ff_val) if ff_val is not None else 0.0
+                        dmin = float(dmin_val) if dmin_val is not None else 0.0
+                        pid_text = f"<b>P:</b> {p:.0f}; <b>I:</b> {i:.0f}; <b>D:</b> {dmin:.0f}; <b>Dmax:</b> {d:.0f}; <b>FF:</b> {ff:.0f};"
                     except:
                         pid_text = f"PID: {pid_val}"
                 else:
                     pid_text = "PID: N/A"
-                chart.legend().markers(series)[0].setLabel(f"{log_name}\n{pid_text}")
-                # Only add annotation for the first log (clear_charts=True)
-                if clear_charts:
-                    chart.legend().setVisible(True)
-                    chart.legend().setLabelColor(Qt.black)
-                    chart.legend().setFont(QFont("Arial", 9))
-                    chart.update()
-                    # Compute max Y and time to reach 0.5 (in ms)
-                    max_y = float(np.max(mean))
-                    max_idx = int(np.argmax(mean))
-                    max_t = float(t_ms[max_idx]) if max_idx < len(t_ms) else 0.0
-                    t_05 = next((float(ti) for ti, yi in zip(t_ms, mean) if yi >= 0.5), None)
-                    # Prepare annotation text in ms
-                    annotation = f"Max: {max_y:.2f} at t={max_t:.0f}ms  Response: {t_05:.0f}ms" if t_05 is not None else f"Max: {max_y:.2f} at t={max_t:.0f}ms  Response: N/A"
-                    label = QLabel(annotation)
-                    label.setStyleSheet("background: rgba(255,255,255,0.8); color: black; font-size: 11px; padding: 2px;")
-                    label.setAlignment(Qt.AlignRight | Qt.AlignTop)
-                    proxy = chart_view.scene().addWidget(label)
-                    proxy.setZValue(100)
-                    proxy.setPos(chart_view.width() - 300, 30)
-                    chart_view._annotation_labels.append(proxy)
+            chart.legend().markers(series)[0].setLabel(f"{log_name}\n{pid_text}")
+            # Add annotation for each log
+            chart.legend().setVisible(True)
+            chart.legend().setLabelColor(Qt.black)
+            legend_font = QFont("fccTYPO", 9)
+            legend_font.setBold(False)  # Ensure normal weight
+            chart.legend().setFont(legend_font)
+            # Set marker to circle
+            for marker in chart.legend().markers(series):
+                marker.setShape(QLegend.MarkerShapeCircle)
+            chart.update()
+            # Compute max Y and time to reach 0.5 (in ms)
+            max_y = float(np.max(mean))
+            max_idx = int(np.argmax(mean))
+            max_t = float(t_ms[max_idx]) if max_idx < len(t_ms) else 0.0
+            t_05 = next((float(ti) for ti, yi in zip(t_ms, mean) if yi >= 0.5), None)
+            # Prepare annotation text in ms with matching color
+            annotation = f"Max: {max_y:.2f} at t={max_t:.0f}ms  Response: {t_05:.0f}ms" if t_05 is not None else f"Max: {max_y:.2f} at t={max_t:.0f}ms  Response: N/A"
+            label = QLabel(annotation)
+            label.setStyleSheet(f"color: {color.name()}; font-size: 9px; padding: 1px; background: transparent;")
+            label.setAttribute(Qt.WA_TranslucentBackground)
+            label.setAlignment(Qt.AlignRight | Qt.AlignTop)
+            proxy = chart_view.scene().addWidget(label)
+            proxy.setZValue(100)
+            # Position annotations vertically for each log with smaller spacing
+            y_offset = 20 + (20 * log_index)  # 20px spacing between annotations, starting at 20px from top
+            proxy.setPos(chart_view.width() - 250, y_offset)  # Moved 50px more to the right
+            if not hasattr(chart_view, '_annotation_labels'):
+                chart_view._annotation_labels = []
+            chart_view._annotation_labels.append(proxy)
 
     def show_tooltip(self, event, chart_view):
         chart = chart_view.chart()

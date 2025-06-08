@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.4] - 2025-06-09
+
+### Added
+- Multi-log color support: Each log uses a distinct color palette 
+- Legends now show each feature for each log, with log names and correct colors.
+- Step Response PID legend displays Feed Forward (FF) and D_min values parsed from the BBL header
+
+### Fixed
+- Legend formatting
+
+### Changed
+- PID, Feed Forward, and D_min values are now always shown in the Step Response legend for each axis, with improved formatting
+- Improved debug output and ensured color assignments are consistent for plots and legends
+
+---
+
 ## [0.4.3] - 2025-06-09
 
 ### Added

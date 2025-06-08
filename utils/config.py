@@ -82,6 +82,19 @@ COLOR_PALETTE = {
     'Throttle': (128, 128, 128),      # Gray
 }
 
+# Alternative color palette for comparing two logs
+ALTERNATIVE_COLOR_PALETTE = {
+    'Gyro (raw)': (180, 0, 180),      # Darker Pink
+    'Gyro (filtered)': (0, 180, 180), # Darker Cyan
+    'P-Term': (180, 140, 0),          # Darker Gold
+    'I-Term': (180, 90, 0),           # Darker Orange
+    'D-Term': (90, 0, 180),           # Darker Purple
+    'FeedForward': (0, 180, 90),      # Darker Green
+    'Setpoint': (70, 70, 70),         # Dark Gray
+    'RC Command': (90, 90, 0),        # Darker Olive
+    'Throttle': (90, 90, 90),         # Darker Gray
+}
+
 # Colors for motors
 MOTOR_COLORS = [
     (255, 100, 100),    # Light Red
@@ -92,6 +105,18 @@ MOTOR_COLORS = [
     (100, 255, 200),    # Light Teal
     (255, 100, 200),    # Light Pink
     (200, 255, 100),    # Light Lime
+]
+
+# Alternative colors for motors in second log
+ALTERNATIVE_MOTOR_COLORS = [
+    (180, 70, 70),      # Darker Red
+    (70, 180, 70),      # Darker Green
+    (70, 70, 180),      # Darker Blue
+    (180, 140, 70),     # Darker Orange
+    (140, 70, 180),     # Darker Purple
+    (70, 180, 140),     # Darker Teal
+    (180, 70, 140),     # Darker Pink
+    (140, 180, 70),     # Darker Lime
 ]
 
 # Chart configurations

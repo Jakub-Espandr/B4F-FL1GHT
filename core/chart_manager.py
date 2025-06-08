@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QSizePolicy, QLabel, QToolTip
 from PySide6.QtCharts import QChart, QChartView, QLineSeries, QLegend, QValueAxis
 from PySide6.QtGui import QPainter, QFont, QColor
 from PySide6.QtCore import Qt, QMargins, QPointF
-from utils.config import CHART_CONFIG, COLOR_PALETTE, MOTOR_COLORS
+from utils.config import CHART_CONFIG, COLOR_PALETTE, MOTOR_COLORS, ALTERNATIVE_COLOR_PALETTE, ALTERNATIVE_MOTOR_COLORS
 from utils.data_processor import get_clean_name, decimate_data
 
 class ChartManager:
@@ -16,6 +16,7 @@ class ChartManager:
         self.full_time_range = None
         self.actual_time_max = None
         self.parent = None  # Add parent property
+        self.current_log_count = 0  # Track how many logs are loaded
 
     def create_chart_views(self, parent, min_chart_height):
         """Create and initialize chart views"""
@@ -46,7 +47,7 @@ class ChartManager:
             
         return self.chart_views
 
-    def update_chart(self, chart_view, series_data, time_min, time_max, y_min=None, y_max=None, line_width=1.0):
+    def update_chart(self, chart_view, series_data, time_min, time_max, y_min=None, y_max=None, line_width=1.0, use_alternative_colors=False):
         """Update a chart with new data. Returns list of QLineSeries added."""
         if not chart_view.chart():
             return []
@@ -82,16 +83,20 @@ class ChartManager:
             clean_name = get_clean_name(data['name'])
             series.setName(clean_name)
 
+            # Select color palette based on whether to use alternative colors
+            color_palette = ALTERNATIVE_COLOR_PALETTE if use_alternative_colors else COLOR_PALETTE
+            motor_colors = ALTERNATIVE_MOTOR_COLORS if use_alternative_colors else MOTOR_COLORS
+
             # Set color based on the type of data using get_clean_name
             color_key = clean_name
             if color_key.startswith('Motor'):
                 try:
                     motor_num = int(color_key.split(' ')[1])
-                    color = QColor(*MOTOR_COLORS[motor_num % len(MOTOR_COLORS)])
+                    color = QColor(*motor_colors[motor_num % len(motor_colors)])
                 except Exception:
-                    color = QColor(*COLOR_PALETTE.get(color_key, (128, 128, 128)))
+                    color = QColor(*color_palette.get(color_key, (128, 128, 128)))
             else:
-                color = QColor(*COLOR_PALETTE.get(color_key, (128, 128, 128)))
+                color = QColor(*color_palette.get(color_key, (128, 128, 128)))
 
             pen = series.pen()
             pen.setColor(color)
@@ -236,6 +241,15 @@ class ChartManager:
         if not selected_features:
             return
             
+        # For multiple logs, track log count and use alternative colors for second log
+        if clear_charts:
+            self.current_log_count = 0
+        else:
+            self.current_log_count += 1
+            
+        # Determine if we should use alternative colors (for second log)
+        use_alternative_colors = (self.current_log_count > 0)
+            
         # Get time data
         time_data = df['time'].values
         if time_data.max() > 1e6:
@@ -367,10 +381,12 @@ class ChartManager:
                 # Use custom Y-axis limits based on chart type
                 if i < 3:  # Roll, Pitch, Yaw - use symmetric values
                     added_series = self.update_chart(chart_view, axis_series, time_data.min(), time_data.max(), 
-                                               y_min=rpy_min, y_max=rpy_max, line_width=line_width)
+                                               y_min=rpy_min, y_max=rpy_max, line_width=line_width,
+                                               use_alternative_colors=use_alternative_colors)
                 else:  # Throttle - use 0 to 2050
                     added_series = self.update_chart(chart_view, axis_series, time_data.min(), time_data.max(),
-                                               y_min=0, y_max=2050, line_width=line_width)
+                                               y_min=0, y_max=2050, line_width=line_width,
+                                               use_alternative_colors=use_alternative_colors)
             else:
                 # Just add the series to the existing chart
                 added_series = []
@@ -380,16 +396,20 @@ class ChartManager:
                     clean_name = get_clean_name(data['name'])
                     series.setName(clean_name)
 
+                    # Select color palette based on whether to use alternative colors
+                    color_palette = ALTERNATIVE_COLOR_PALETTE if use_alternative_colors else COLOR_PALETTE
+                    motor_colors = ALTERNATIVE_MOTOR_COLORS if use_alternative_colors else MOTOR_COLORS
+
                     # Set color based on the type of data using get_clean_name
                     color_key = clean_name
                     if color_key.startswith('Motor'):
                         try:
                             motor_num = int(color_key.split(' ')[1])
-                            color = QColor(*MOTOR_COLORS[motor_num % len(MOTOR_COLORS)])
+                            color = QColor(*motor_colors[motor_num % len(motor_colors)])
                         except Exception:
-                            color = QColor(*COLOR_PALETTE.get(color_key, (128, 128, 128)))
+                            color = QColor(*color_palette.get(color_key, (128, 128, 128)))
                     else:
-                        color = QColor(*COLOR_PALETTE.get(color_key, (128, 128, 128)))
+                        color = QColor(*color_palette.get(color_key, (128, 128, 128)))
 
                     pen = series.pen()
                     pen.setColor(color)
@@ -408,15 +428,19 @@ class ChartManager:
             for data, series in zip(axis_series, added_series):
                 clean_name = get_clean_name(data['name'])
                 
+                # Select color palette based on whether to use alternative colors
+                color_palette = ALTERNATIVE_COLOR_PALETTE if use_alternative_colors else COLOR_PALETTE
+                motor_colors = ALTERNATIVE_MOTOR_COLORS if use_alternative_colors else MOTOR_COLORS
+                
                 # Get color from COLOR_PALETTE or MOTOR_COLORS
                 if clean_name.startswith('Motor'):
                     try:
                         motor_num = int(clean_name.split(' ')[1])
-                        color = QColor(*MOTOR_COLORS[motor_num % len(MOTOR_COLORS)])
+                        color = QColor(*motor_colors[motor_num % len(motor_colors)])
                     except:
-                        color = QColor(*COLOR_PALETTE.get(clean_name, (128, 128, 128)))
+                        color = QColor(*color_palette.get(clean_name, (128, 128, 128)))
                 else:
-                    color = QColor(*COLOR_PALETTE.get(clean_name, (128, 128, 128)))
+                    color = QColor(*color_palette.get(clean_name, (128, 128, 128)))
                 
                 # Store for legend - use clean_name as key to deduplicate
                 # Only add this label if we haven't seen it yet

@@ -344,16 +344,30 @@ class FL1GHTViewer(QWidget):
                 
                 # Parse PID values from the BBL header
                 pid_vals = {'roll': None, 'pitch': None, 'yaw': None}
+                ff_weights = {'roll': None, 'pitch': None, 'yaw': None}
+                d_min_vals = {'roll': None, 'pitch': None, 'yaw': None}
                 try:
                     with open(file_path, 'r', encoding='latin-1', errors='ignore') as f:
+                        print(f"[DEBUG] Reading BBL header from {filename}")
                         for i, line in enumerate(f):
+                            print(f"[DEBUG] Line {i}: {line.strip()}")  # Debug print
                             if 'rollPID:' in line:
                                 pid_vals['roll'] = line.split('rollPID:')[1].strip().split()[0]
                             if 'pitchPID:' in line:
                                 pid_vals['pitch'] = line.split('pitchPID:')[1].strip().split()[0]
                             if 'yawPID:' in line:
                                 pid_vals['yaw'] = line.split('yawPID:')[1].strip().split()[0]
-                            if i > 100:
+                            if 'ff_weight:' in line:
+                                weights = line.split('ff_weight:')[1].strip().split(',')
+                                ff_weights['roll'] = weights[0]
+                                ff_weights['pitch'] = weights[1]
+                                ff_weights['yaw'] = weights[2]
+                            if 'd_min:' in line:
+                                dmins = line.split('d_min:')[1].strip().split(',')
+                                d_min_vals['roll'] = dmins[0]
+                                d_min_vals['pitch'] = dmins[1]
+                                d_min_vals['yaw'] = dmins[2]
+                            if i > 100:  # Only read first 100 lines of header
                                 break
                 except Exception as e:
                     print(f"[DEBUG] Could not parse PID from .bbl: {e}")
@@ -444,6 +458,23 @@ class FL1GHTViewer(QWidget):
                                 df['pitchPID'] = pid_vals['pitch']
                             if pid_vals['yaw']:
                                 df['yawPID'] = pid_vals['yaw']
+                            # Inject feed forward weights
+                            if ff_weights['roll']:
+                                df['rollFF'] = int(ff_weights['roll'])
+                            if ff_weights['pitch']:
+                                df['pitchFF'] = int(ff_weights['pitch'])
+                            if ff_weights['yaw']:
+                                df['yawFF'] = int(ff_weights['yaw'])
+                            # Inject d_min values
+                            if d_min_vals['roll']:
+                                df['rollDMin'] = int(d_min_vals['roll'])
+                            if d_min_vals['pitch']:
+                                df['pitchDMin'] = int(d_min_vals['pitch'])
+                            if d_min_vals['yaw']:
+                                df['yawDMin'] = int(d_min_vals['yaw'])
+                            
+                            print(f"[DEBUG] Added feed forward weights to DataFrame: roll={ff_weights['roll']}, pitch={ff_weights['pitch']}, yaw={ff_weights['yaw']}")
+                            print(f"[DEBUG] Added d_min to DataFrame: roll={d_min_vals['roll']}, pitch={d_min_vals['pitch']}, yaw={d_min_vals['yaw']}")
                             
                             # Strip leading/trailing spaces from all column names
                             df.columns = df.columns.str.strip()
@@ -533,6 +564,23 @@ class FL1GHTViewer(QWidget):
                             df['pitchPID'] = pid_vals['pitch']
                         if pid_vals['yaw']:
                             df['yawPID'] = pid_vals['yaw']
+                        # Inject feed forward weights
+                        if ff_weights['roll']:
+                            df['rollFF'] = int(ff_weights['roll'])
+                        if ff_weights['pitch']:
+                            df['pitchFF'] = int(ff_weights['pitch'])
+                        if ff_weights['yaw']:
+                            df['yawFF'] = int(ff_weights['yaw'])
+                        # Inject d_min values
+                        if d_min_vals['roll']:
+                            df['rollDMin'] = int(d_min_vals['roll'])
+                        if d_min_vals['pitch']:
+                            df['pitchDMin'] = int(d_min_vals['pitch'])
+                        if d_min_vals['yaw']:
+                            df['yawDMin'] = int(d_min_vals['yaw'])
+                        
+                        print(f"[DEBUG] Added feed forward weights to DataFrame: roll={ff_weights['roll']}, pitch={ff_weights['pitch']}, yaw={ff_weights['yaw']}")
+                        print(f"[DEBUG] Added d_min to DataFrame: roll={d_min_vals['roll']}, pitch={d_min_vals['pitch']}, yaw={d_min_vals['yaw']}")
                         
                         # Strip leading/trailing spaces from all column names
                         df.columns = df.columns.str.strip()
@@ -670,7 +718,7 @@ class FL1GHTViewer(QWidget):
             log_name = None
             if hasattr(self.feature_widget, 'selected_logs') and self.feature_widget.selected_logs:
                 log_name = self.feature_widget.selected_logs[0]
-            self.step_response_widget.update_step_response(self.feature_widget.current_log, line_width=line_width, log_name=log_name)
+            self.step_response_widget.update_step_response(self.feature_widget.current_log, line_width=line_width, log_name=log_name, log_index=0)
         elif current_tab == 3:
             # Frequency analyzer tab
             try:
@@ -921,4 +969,4 @@ class FL1GHTViewer(QWidget):
             if log_name in self.feature_widget.loaded_logs:
                 df = self.feature_widget.loaded_logs[log_name]
                 clear_charts = (idx == 0)
-                self.step_response_widget.update_step_response(df, line_width=line_width, log_name=log_name, clear_charts=clear_charts) 
+                self.step_response_widget.update_step_response(df, line_width=line_width, log_name=log_name, clear_charts=clear_charts, log_index=idx) 
