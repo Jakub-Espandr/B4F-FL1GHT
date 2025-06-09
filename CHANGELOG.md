@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - 2025-06-09
+
+### Added
+- Added a new Parameters tab for viewing and editing parameters.
+
+### Improved
+- Increased the resolution of exported images for better quality and detail.
+- Enhanced multiple file selection using Ctrl control for better user interaction.
+
+---
+
 ## [0.4.4] - 2025-06-09
 
 ### Added

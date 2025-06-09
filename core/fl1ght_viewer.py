@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QFont, QPainter
 from PySide6.QtCore import Qt, QMargins
 from PySide6.QtCharts import QChart
-from ui.widgets import FeatureSelectionWidget, ControlWidget, SpectralAnalyzerWidget, StepResponseWidget, FrequencyAnalyzerWidget, PlotExportWidget
+from ui.widgets import FeatureSelectionWidget, ControlWidget, SpectralAnalyzerWidget, StepResponseWidget, FrequencyAnalyzerWidget, PlotExportWidget, ParametersWidget
 from .chart_manager import ChartManager
 from utils.data_processor import normalize_time_data, get_clean_name, decimate_data
 from utils.config import FONT_CONFIG
@@ -26,6 +26,7 @@ class FL1GHTViewer(QWidget):
         super().__init__()
         self.setWindowTitle("B4F: FL1GHT")
         self.setMinimumSize(400, 400)
+        self.previous_tab_index = 0  # Track previous tab index
         
         # Initialize components
         self.chart_manager = ChartManager()
@@ -103,6 +104,9 @@ class FL1GHTViewer(QWidget):
         # Frequency analyzer tab
         self.frequency_analyzer_widget = FrequencyAnalyzerWidget(self.feature_widget)
         
+        # Parameters tab
+        self.parameters_widget = ParametersWidget(self.feature_widget)
+        
         # Export tab
         self.export_widget = PlotExportWidget()
         
@@ -111,6 +115,7 @@ class FL1GHTViewer(QWidget):
         self.tab_widget.addTab(self.spectral_widget, "Spectral Analysis")
         self.tab_widget.addTab(self.step_response_widget, "Step Response")
         self.tab_widget.addTab(self.frequency_analyzer_widget, "Frequency Analyzer")
+        self.tab_widget.addTab(self.parameters_widget, "Parameters")
         self.tab_widget.addTab(self.export_widget, "Export Plots")
         
         right_layout.addWidget(self.tab_widget)
@@ -501,6 +506,8 @@ class FL1GHTViewer(QWidget):
                             
                             # Store the dataframe in the loaded_logs dictionary
                             self.feature_widget.loaded_logs[display_filename] = df
+                            # Store the .bbl file path for this log
+                            self.feature_widget.loaded_log_paths[display_filename] = file_path
                             
                             # Add the filename to the logs list and combo box
                             self.feature_widget.logs_list.addItem(display_filename)
@@ -607,6 +614,8 @@ class FL1GHTViewer(QWidget):
                         
                         # Store the dataframe in the loaded_logs dictionary
                         self.feature_widget.loaded_logs[filename] = df
+                        # Store the .bbl file path for this log
+                        self.feature_widget.loaded_log_paths[filename] = file_path
                         
                         # Add the filename to the logs list and combo box
                         self.feature_widget.logs_list.addItem(filename)
@@ -678,13 +687,16 @@ class FL1GHTViewer(QWidget):
             if len(self.feature_widget.selected_logs) == 1:
                 log_name = self.feature_widget.selected_logs[0]
                 self.feature_widget.current_log = self.feature_widget.loaded_logs[log_name]
+                # Update parameters tab if it's active
+                if current_tab == 4:  # Parameters tab
+                    self.parameters_widget.update_parameters(log_name)
         # Check if we have a current log
         if not hasattr(self.feature_widget, 'current_log') or self.feature_widget.current_log is None:
             QMessageBox.warning(self, "Warning", "Please select a log first.")
             return
         # Only plot for the active tab
         current_tab = self.tab_widget.currentIndex()
-        # 0 = Time Domain, 1 = Spectral Analysis, 2 = Step Response, 3 = Frequency Analyzer
+        # 0 = Time Domain, 1 = Spectral Analysis, 2 = Step Response, 3 = Frequency Analyzer, 4 = Parameters
         if current_tab == 0:
             try:
                 self.control_widget.progress_bar.setVisible(True)
@@ -719,8 +731,7 @@ class FL1GHTViewer(QWidget):
             if hasattr(self.feature_widget, 'selected_logs') and self.feature_widget.selected_logs:
                 log_name = self.feature_widget.selected_logs[0]
             self.step_response_widget.update_step_response(self.feature_widget.current_log, line_width=line_width, log_name=log_name, log_index=0)
-        elif current_tab == 3:
-            # Frequency analyzer tab
+        elif current_tab == 3:  # Frequency Analyzer
             try:
                 # Calculate the Nyquist frequency (half of the sampling rate)
                 time_data = self.feature_widget.current_log['time'].values.astype(float)
@@ -743,6 +754,10 @@ class FL1GHTViewer(QWidget):
                 self.frequency_analyzer_widget.update_frequency_plots(self.feature_widget.current_log, max_freq=max_freq)
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to update frequency plots: {str(e)}")
+        elif current_tab == 4:  # Parameters tab
+            # Update parameters display
+            if hasattr(self.feature_widget, 'selected_logs') and self.feature_widget.selected_logs:
+                self.parameters_widget.update_parameters(self.feature_widget.selected_logs[0])
 
     def update_spectral_analysis(self):
         """Update the spectral analysis when inputs change"""
@@ -838,46 +853,66 @@ class FL1GHTViewer(QWidget):
             self.feature_widget.throttle_checkbox.setChecked(True)
 
     def on_tab_changed(self, index):
-        # 0 = Time Domain, 1 = Spectral Analysis, 2 = Step Response, 3 = Frequency Analyzer, 4 = Export
-        
-        # Store previous tab index when switching to export tab
-        if index == 4:  # Export tab
-            # Store the previous tab index (we need to look at the previously active tab)
-            previous_index = getattr(self, '_previous_tab_index', 0)
-            # Set it in the export widget
-            if hasattr(self, 'export_widget'):
-                self.export_widget.set_previous_tab(previous_index)
+        # Store the previous tab index before any logic
+        prev_tab = self.previous_tab_index
+        self.previous_tab_index = index
+        # 0 = Time Domain, 1 = Spectral Analysis, 2 = Step Response, 3 = Frequency Analyzer, 4 = Parameters, 5 = Export
+        if index == 5:  # Export tab
+            # Only export if we're coming from a valid tab (0-3)
+            if 0 <= prev_tab <= 3:
+                self.export_widget.set_previous_tab(prev_tab)
                 self.export_widget.export_plots()
-            return
-        
-        # Remember the current tab index for the next tab change
-        self._previous_tab_index = index
-        
-        # Deselect all logs when changing tabs
-        self.feature_widget.logs_list.clearSelection()
-        self.feature_widget.selected_logs = []
-        
-        if index == 0:
+            else:
+                self.export_widget.status_label.setText("Please select a valid tab to export from.")
+        if index == 0:  # Time Domain
             self.set_time_domain_defaults()
             self.feature_widget.set_time_domain_mode(True)
             self.feature_widget.legend_group.setVisible(True)
+            # Enable checkboxes for time domain
+            self.feature_widget._set_checkboxes_enabled(True)
             # Update plot for time domain if we have data
             if hasattr(self, 'df') and self.df is not None:
                 self.plot_selected()
-        elif index == 1:
+        elif index == 1:  # Spectral Analysis
             self.set_spectral_defaults()
             self.feature_widget.set_spectral_mode(True)
             self.feature_widget.legend_group.setVisible(True)
-        elif index == 2:
+            # Enable checkboxes for spectral analysis except motors and throttle
+            self.feature_widget._set_checkboxes_enabled(True)
+            # Disable motor and throttle checkboxes
+            self.feature_widget.motor_checkbox.setEnabled(False)
+            self.feature_widget.throttle_checkbox.setEnabled(False)
+            # Enforce 2-log limit for spectral analysis
+            if hasattr(self.feature_widget, 'selected_logs') and len(self.feature_widget.selected_logs) > 2:
+                # Keep only the first 2 selected logs
+                self.feature_widget.selected_logs = self.feature_widget.selected_logs[:2]
+                # Update the list widget selection
+                self.feature_widget.logs_list.clearSelection()
+                for i in range(self.feature_widget.logs_list.count()):
+                    item = self.feature_widget.logs_list.item(i)
+                    if item.text() in self.feature_widget.selected_logs:
+                        item.setSelected(True)
+        elif index == 2:  # Step Response
             self.set_step_response_defaults()
             self.feature_widget.set_step_response_mode(True)
             self.feature_widget.legend_group.setVisible(False)
-        elif index == 3:
+            # Disable checkboxes for step response
+            self.feature_widget._set_checkboxes_enabled(False)
+            # Clear any existing legends in step response charts
+            if hasattr(self, 'step_response_widget'):
+                self.step_response_widget.clear_all_legends()
+        elif index == 3:  # Frequency Analyzer
             self.set_frequency_analyzer_defaults()
             self.feature_widget.set_time_domain_mode(False)
             self.feature_widget.legend_group.setVisible(False)
+            # Disable checkboxes for frequency analyzer
+            self.feature_widget._set_checkboxes_enabled(False)
+            # Set single selection mode for frequency analyzer
+            self.feature_widget.logs_list.setSelectionMode(QListWidget.SingleSelection)
             # No longer auto-update frequency analyzer plots
             # Let user click "Show Plot" button instead
+        elif index == 4:  # Parameters
+            self.feature_widget._set_checkboxes_enabled(False)
 
     def plot_multiple_logs(self):
         """Plot multiple selected logs together"""

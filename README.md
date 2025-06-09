@@ -48,6 +48,9 @@ A modern, feature-rich blackbox log viewer for FPV drone flight data analysis. D
     - Spectral Analysis: Up to 2 flights
     - Step Response: Up to 5 flights
     - Frequency Analyzer: Single flight
+- **Parameters Tab**
+  - View all parsed Betaflight `.bbl` header parameters in a clean, scrollable table
+  - Useful for quickly checking firmware, PID, hardware, and other configuration values embedded in your log file
 
 ---
 
