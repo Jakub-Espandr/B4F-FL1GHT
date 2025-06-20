@@ -7,10 +7,10 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFileDialog,
     QCheckBox, QLabel, QMessageBox, QGroupBox, QScrollArea,
     QSlider, QProgressBar, QSizePolicy, QComboBox, QToolTip, QGridLayout, QSpinBox,
-    QDialog, QLineEdit, QListWidget, QApplication
+    QDialog, QLineEdit, QListWidget, QApplication, QDoubleSpinBox
 )
 from PySide6.QtGui import QFont, QColor, QPainter, QPen, QIcon, QImage, QPixmap
-from PySide6.QtCore import Qt, QMargins, QTimer, QSize, QRect
+from PySide6.QtCore import Qt, QMargins, QTimer, QSize, QRect, QPoint
 from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis, QAreaSeries, QCategoryAxis, QLegend
 from utils.config import FONT_CONFIG, COLOR_PALETTE, MOTOR_COLORS, ALTERNATIVE_COLOR_PALETTE
 from utils.data_processor import get_clean_name
@@ -18,18 +18,18 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from utils.step_response import StepResponseCalculator
 from utils.step_trace import StepTrace
 import os
 import matplotlib.cm as cm
 from scipy import signal
-from scipy.ndimage import gaussian_filter1d
+from scipy.ndimage import gaussian_filter1d, gaussian_filter
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from utils.pid_analyzer_noise import plot_all_noise_from_df, plot_noise_from_df, generate_individual_noise_figures
 import sys
 import json
 import tempfile
 import warnings
+from utils.spectrogram_utils import calculate_spectrogram
 
 class FeatureSelectionWidget(QWidget):
     def __init__(self, parent=None):
@@ -555,7 +555,7 @@ class FeatureSelectionWidget(QWidget):
         self.time_domain_mode = enabled
         # Update selection mode based on current tab
         current_tab = self.get_current_tab_index()
-        if current_tab in [0, 3, 4]:  # Time Domain, Frequency Analyzer, Parameters
+        if current_tab in [0, 3, 4]:  # Time Domain, Noise Analysis, Drone Config
             self.logs_list.setSelectionMode(QListWidget.SingleSelection)
         elif current_tab in [1, 2]:  # Spectral Analysis, Step Response
             self.logs_list.setSelectionMode(QListWidget.ExtendedSelection)
@@ -612,7 +612,7 @@ class FeatureSelectionWidget(QWidget):
                     pass
 
     def set_spectral_mode(self, enabled):
-        """Set the widget to spectral analysis mode"""
+        """Set the widget to frequency domain mode"""
         self.spectral_mode = enabled
         # Update selection mode based on current tab
         current_tab = self.get_current_tab_index()
@@ -620,19 +620,22 @@ class FeatureSelectionWidget(QWidget):
             self.logs_list.setSelectionMode(QListWidget.SingleSelection)
             # Enable checkboxes for time domain
             self._set_checkboxes_enabled(True)
-        elif current_tab == 3:  # Frequency Analyzer
+        elif current_tab == 3:  # Noise Analysis
             self.logs_list.setSelectionMode(QListWidget.SingleSelection)
-            # Disable checkboxes for frequency analyzer
+            # Disable checkboxes for noise analysis
             self._set_checkboxes_enabled(False)
-        elif current_tab == 4:  # Parameters
-            self.logs_list.setSelectionMode(QListWidget.SingleSelection)
-            # Disable checkboxes for parameters tab
-            self._set_checkboxes_enabled(False)
-        elif current_tab == 1:  # Spectral Analysis
+        elif current_tab == 5:  # Drone Config
             self.logs_list.setSelectionMode(QListWidget.ExtendedSelection)
-            # Enable checkboxes for spectral analysis
+            # Disable checkboxes for drone config tab
+            self._set_checkboxes_enabled(False)
+        elif current_tab == 1:  # Frequency Domain
+            self.logs_list.setSelectionMode(QListWidget.ExtendedSelection)
+            # Enable checkboxes for frequency domain
             self._set_checkboxes_enabled(True)
-            # Connect spectral analysis handler
+            # Automatically select gyro (raw) and gyro (filtered) for frequency domain analysis
+            self.gyro_unfilt_checkbox.setChecked(True)
+            self.gyro_scaled_checkbox.setChecked(True)
+            # Connect frequency domain handler
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", RuntimeWarning)
                 try:
@@ -660,10 +663,6 @@ class FeatureSelectionWidget(QWidget):
                 except (TypeError, RuntimeError):
                     pass
             self.logs_list.itemSelectionChanged.connect(self._handle_step_response_log_selection)
-        elif current_tab == 5:  # Export
-            self.logs_list.setSelectionMode(QListWidget.SingleSelection)
-            # Enable checkboxes for export
-            self._set_checkboxes_enabled(True)
 
     def _handle_step_response_checkbox(self, state):
         """Handle checkbox state changes in step response mode"""
@@ -797,9 +796,8 @@ class FeatureSelectionWidget(QWidget):
         if self.debug('DEBUG'):
             print(f"[DEBUG] on_logs_selection_changed: current_tab={current_tab}")
         
-        # Force single selection for Time Domain, Frequency Analyzer
-        # Allow up to 2 for Parameters tab
-        if current_tab in [0, 3]:  # Time Domain, Frequency Analyzer
+        # Force single selection for Time Domain, Noise Analysis
+        if current_tab in [0, 3]:  # Time Domain, Noise Analysis
             if len(selected_items) > 1:
                 last_selected = selected_items[-1]
                 self.logs_list.clearSelection()
@@ -807,21 +805,30 @@ class FeatureSelectionWidget(QWidget):
                 selected_items = [last_selected]
                 if self.debug('DEBUG'):
                     print(f"[DEBUG] on_logs_selection_changed: forced single selection, kept {last_selected.text()}")
-        elif current_tab == 4:  # Parameters
+        elif current_tab == 5:  # Drone Config
             if len(selected_items) > 2:
                 # Unselect the last selected item
                 selected_items[-1].setSelected(False)
                 selected_items = selected_items[:-1]
-                QMessageBox.warning(self, "Warning", "You can only select up to 2 logs for parameter comparison.")
+                QMessageBox.warning(self, "Warning", "You can only select up to 2 logs for drone config comparison.")
                 if self.debug('DEBUG'):
                     print(f"[DEBUG] on_logs_selection_changed: forced two selection, kept {[item.text() for item in selected_items]}")
+        elif current_tab == 1:  # Frequency Domain
+            if len(selected_items) > 2:
+                # Unselect the last selected item
+                selected_items[-1].setSelected(False)
+                selected_items = selected_items[:-1]
+                QMessageBox.warning(self, "Warning", "You can only select up to 2 logs for frequency domain analysis.")
+                if self.debug('DEBUG'):
+                    print(f"[DEBUG] on_logs_selection_changed: forced two selection for frequency domain, kept {[item.text() for item in selected_items]}")
         else:
-            # For all other tabs, check if Ctrl/Cmd key is pressed
+            # For all other tabs, check if Ctrl/Cmd or Shift key is pressed
             modifiers = QApplication.keyboardModifiers()
-            is_multi_select = modifiers & (Qt.ControlModifier | Qt.MetaModifier)
+            is_ctrl_cmd = modifiers & (Qt.ControlModifier | Qt.MetaModifier)
+            is_shift = modifiers & Qt.ShiftModifier
             
             # If not multi-select and more than one item is selected, clear all but the last selected
-            if not is_multi_select and len(selected_items) > 1:
+            if not (is_ctrl_cmd or is_shift) and len(selected_items) > 1:
                 last_selected = selected_items[-1]
                 self.logs_list.clearSelection()
                 last_selected.setSelected(True)
@@ -851,10 +858,10 @@ class FeatureSelectionWidget(QWidget):
             
             # Only notify parent for non-Time Domain tabs
             if current_tab != 0:  # Don't auto-plot in Time Domain tab
-                # For Parameters tab, pass up to 2 logs
-                if current_tab == 4:
+                # For Drone Config tab, pass up to 2 logs
+                if current_tab == 5:  # Drone Config (changed from 4 to 5)
                     if self.debug('DEBUG'):
-                        print(f"[DEBUG] on_logs_selection_changed: notifying parent for Parameters tab with logs {self.selected_logs[:2]}")
+                        print(f"[DEBUG] on_logs_selection_changed: notifying parent for Drone Config tab with logs {self.selected_logs[:2]}")
                     self.notify_parent_update(self.selected_logs[:2])
                 else:
                     if self.debug('DEBUG'):
@@ -898,7 +905,7 @@ class FeatureSelectionWidget(QWidget):
             QMessageBox.warning(self, "Warning", "You can only select up to 5 flights for step response analysis.")
 
     def _handle_spectral_log_selection(self):
-        """Handle log selection changes in spectral analysis mode"""
+        """Handle log selection changes in frequency domain mode"""
         if not hasattr(self, 'spectral_mode') or not self.spectral_mode:
             return
             
@@ -906,11 +913,83 @@ class FeatureSelectionWidget(QWidget):
         if len(selected_items) > 2:
             # Unselect the last selected item
             selected_items[-1].setSelected(False)
-            QMessageBox.warning(self, "Warning", "You can only select up to 2 flights for spectral analysis.")
+            QMessageBox.warning(self, "Warning", "You can only select up to 2 flights for frequency domain.")
 
     def debug(self, level):
         levels = {"INFO": 1, "DEBUG": 2, "VERBOSE": 3}
         return levels.get(getattr(self, 'debug_level', 'INFO'), 1) >= levels.get(level, 1)
+
+    def check_missing_features(self):
+        """Check if selected checkboxes have corresponding data in the current log and show warnings"""
+        if not hasattr(self, 'df') or self.df is None:
+            return
+            
+        missing_features = []
+        
+        # Check gyro data
+        if self.gyro_unfilt_checkbox.isChecked():
+            gyro_unfilt_cols = [col for col in self.df.columns if 'gyrounfilt' in col.lower()]
+            if not gyro_unfilt_cols:
+                missing_features.append("Gyro (raw)")
+                
+        if self.gyro_scaled_checkbox.isChecked():
+            gyro_scaled_cols = [col for col in self.df.columns if 'gyroadc' in col.lower() and '(deg/s)' in col]
+            if not gyro_scaled_cols:
+                missing_features.append("Gyro (filtered)")
+        
+        # Check PID data
+        if self.pid_p_checkbox.isChecked():
+            pid_p_cols = [col for col in self.df.columns if 'axisp' in col.lower()]
+            if not pid_p_cols:
+                missing_features.append("P-Term")
+                
+        if self.pid_i_checkbox.isChecked():
+            pid_i_cols = [col for col in self.df.columns if 'axisi' in col.lower()]
+            if not pid_i_cols:
+                missing_features.append("I-Term")
+                
+        if self.pid_d_checkbox.isChecked():
+            pid_d_cols = [col for col in self.df.columns if 'axisd' in col.lower()]
+            if not pid_d_cols:
+                missing_features.append("D-Term")
+                
+        if self.pid_f_checkbox.isChecked():
+            pid_f_cols = [col for col in self.df.columns if 'axisf' in col.lower()]
+            if not pid_f_cols:
+                missing_features.append("FeedForward")
+        
+        # Check Setpoint data
+        if self.setpoint_checkbox.isChecked():
+            setpoint_cols = [col for col in self.df.columns if 'setpoint' in col.lower()]
+            if not setpoint_cols:
+                missing_features.append("Setpoint")
+        
+        # Check RC data
+        if self.rc_checkbox.isChecked():
+            rc_cols = [col for col in self.df.columns if 'rccommand' in col.lower() and '[3]' not in col]
+            if not rc_cols:
+                missing_features.append("RC Commands")
+        
+        # Check Throttle data
+        if self.throttle_checkbox.isChecked():
+            throttle_cols = [col for col in self.df.columns if 'rccommand[3]' in col.lower()]
+            if not throttle_cols:
+                missing_features.append("Throttle")
+        
+        # Check Motor Outputs
+        if self.motor_checkbox.isChecked():
+            motor_cols = [col for col in self.df.columns if col.lower().startswith('motor[')]
+            if not motor_cols:
+                missing_features.append("Motor Outputs")
+        
+        # Show warning if any features are missing
+        if missing_features:
+            feature_list = ", ".join(missing_features)
+            QMessageBox.warning(
+                self, 
+                "Missing Data", 
+                f"The following selected features are not available in the current log:\n\n{feature_list}\n\nThese features will not be plotted."
+            )
 
 class ControlWidget(QWidget):
     def __init__(self, parent=None):
@@ -1737,8 +1816,8 @@ class FrequencyAnalyzerWidget(QWidget):
         gain_label.setFont(self.create_font('label'))
         self.gain_slider = QSlider(Qt.Horizontal)
         self.gain_slider.setMinimum(1)  # Min gain 1x
-        self.gain_slider.setMaximum(50) # Max gain 50x
-        self.gain_slider.setValue(5)    # Default 5x
+        self.gain_slider.setMaximum(50)
+        self.gain_slider.setValue(5)
         self.gain_slider.setTickInterval(5)
         self.gain_slider.setTickPosition(QSlider.TicksBelow)
         self.gain_value_label = QLabel(f"{self.gain}x")
@@ -1955,12 +2034,14 @@ class PlotExportWidget(QWidget):
         try:
             if self.previous_tab_index == 0:  # Time Domain
                 self._export_time_domain_plots(parent)
-            elif self.previous_tab_index == 1:  # Spectral Analysis
+            elif self.previous_tab_index == 1:  # Frequency Domain
                 self._export_spectral_plots(parent)
             elif self.previous_tab_index == 2:  # Step Response
                 self._export_step_response_plots(parent)
-            elif self.previous_tab_index == 3:  # Frequency Analyzer
+            elif self.previous_tab_index == 3:  # Noise Analysis
                 self._export_frequency_analyzer_plots(parent)
+            elif self.previous_tab_index == 4:  # Frequency Evolution
+                self._export_spectrogram_plots(parent)
             else:
                 self.status_label.setText("Invalid tab index for export")
         except Exception as e:
@@ -2187,7 +2268,7 @@ class PlotExportWidget(QWidget):
                 header_font.setBold(True)
                 painter.setFont(header_font)
                 painter.setPen(QColor(0, 0, 0))
-                header_text = f"Log: {log_name} | Spectral Analysis | Date: {current_date}"
+                header_text = f"Log: {log_name} | Frequency Domain | Date: {current_date}"
                 if author_name:
                     header_text += f" | Author: {author_name}"
                 if drone_name:
@@ -2283,9 +2364,9 @@ class PlotExportWidget(QWidget):
             finally:
                 painter.end()
             if use_drone and drone_name:
-                filename = f"{drone_name_filename}-{log_name}-Spectral-{timestamp}.jpg"
+                filename = f"{drone_name_filename}-{log_name}-FrequencyDomain-{timestamp}.jpg"
             else:
-                filename = f"{log_name}-Spectral-{timestamp}.jpg"
+                filename = f"{log_name}-FrequencyDomain-{timestamp}.jpg"
             filepath = os.path.join(export_dir, filename)
             combined_image.save(filepath, "JPG", quality=100)
             self.status_label.setText(f"Exported stacked Spectral plots to {export_dir} as {filename}")
@@ -2364,7 +2445,7 @@ class PlotExportWidget(QWidget):
         try:
             freq_widget = parent.frequency_analyzer_widget
             if not hasattr(freq_widget, 'canvas_list') or not freq_widget.canvas_list:
-                self.status_label.setText("No Frequency Analyzer plots to export.")
+                self.status_label.setText("No Noise Analysis plots to export.")
                 return
             export_dir = self._get_export_dir(parent)
             import os
@@ -2384,7 +2465,7 @@ class PlotExportWidget(QWidget):
             gain = freq_widget.gain if hasattr(freq_widget, 'gain') else 1.0
             figures = [canvas.figure for canvas in freq_widget.canvas_list if hasattr(canvas, 'figure')]
             if not figures:
-                self.status_label.setText("No valid Frequency Analyzer plots to export.")
+                self.status_label.setText("No valid Noise Analysis plots to export.")
                 return
             for i, fig in enumerate(figures):
                 # Save the matplotlib figure to a temporary PNG file at high DPI
@@ -2410,7 +2491,7 @@ class PlotExportWidget(QWidget):
                     header_font.setBold(True)
                     painter.setFont(header_font)
                     painter.setPen(QColor(0, 0, 0))
-                    header_text = f"Log: {log_name} - Frequency Analyzer - {timestamp}"
+                    header_text = f"Log: {log_name} - Noise Analysis - {timestamp}"
                     if author_name:
                         header_text += f" - {author_name}"
                     if use_drone and drone_name:
@@ -2428,13 +2509,127 @@ class PlotExportWidget(QWidget):
                 finally:
                     painter.end()
                 if use_drone and drone_name_filename:
-                    filename = f"{log_name}_{drone_name_filename}_Frequency_{i+1}_{timestamp}.jpg"
+                    filename = f"{log_name}_{drone_name_filename}_NoiseAnalysis_{i+1}_{timestamp}.jpg"
                 else:
-                    filename = f"{log_name}_Frequency_{i+1}_{timestamp}.jpg"
+                    filename = f"{log_name}_NoiseAnalysis_{i+1}_{timestamp}.jpg"
                 final_img.save(os.path.join(export_dir, filename), "JPG", quality=100)
-            self.status_label.setText(f"Exported stacked Frequency Analyzer plots to {export_dir} as {filename}")
+            self.status_label.setText(f"Exported stacked Noise Analysis plots to {export_dir} as {filename}")
         except Exception as e:
             self.status_label.setText(f"Error exporting frequency plots: {str(e)}")
+
+    def _export_spectrogram_plots(self, parent):
+        try:
+            import datetime
+            import os
+            spectrogram_widget = parent.spectrogram_widget
+            if not hasattr(spectrogram_widget, 'canvas_list') or not spectrogram_widget.canvas_list:
+                self.status_label.setText("No Frequency Evolution plots to export.")
+                return
+
+            import io
+            from PySide6.QtGui import QImage, QPainter, QPixmap, QFont, QColor
+            from PySide6.QtCore import QSize, Qt, QRect, QPoint
+
+            # 1. Render all canvases to in-memory pixmaps to correctly calculate dimensions
+            pixmaps = []
+            for canvas in spectrogram_widget.canvas_list:
+                try:
+                    buf = io.BytesIO()
+                    # Use savefig with bbox_inches='tight' to remove whitespace around the figure
+                    canvas.figure.savefig(buf, format='png', dpi=300, bbox_inches='tight', pad_inches=0.1)
+                    buf.seek(0)
+                    pixmap = QPixmap()
+                    pixmap.loadFromData(buf.read())
+                    pixmaps.append(pixmap)
+                except Exception as e:
+                    print(f"Error rendering spectrogram canvas to pixmap: {e}")
+                    continue
+            
+            if not pixmaps:
+                self.status_label.setText("Failed to render spectrogram plots for export.")
+                return
+
+            # 2. Calculate final image dimensions from the rendered pixmaps
+            # Scale all plots to the width of the widest plot for consistency
+            max_width = max(p.width() for p in pixmaps)
+            
+            scaled_pixmaps = []
+            total_chart_height = 0
+            for p in pixmaps:
+                scaled_p = p.scaledToWidth(max_width, Qt.SmoothTransformation)
+                scaled_pixmaps.append(scaled_p)
+                total_chart_height += scaled_p.height()
+
+            export_dir = self._get_export_dir(parent)
+            os.makedirs(export_dir, exist_ok=True)
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            current_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            log_name = parent.feature_widget.selected_logs[0] if hasattr(parent.feature_widget, 'selected_logs') and parent.feature_widget.selected_logs else "LogFile"
+            log_name = os.path.splitext(log_name)[0]
+            drone_name = self._get_drone_name(parent)
+            drone_name_filename = drone_name.replace(' ', '_') if drone_name else ''
+            use_drone = self._use_drone_in_filename(parent)
+            author_name = self._get_author_name(parent)
+
+            # Define header height, but no legend height for frequency evolution
+            header_font_scale = 3.5
+            header_height = int(100 * header_font_scale)
+            
+            width = max_width
+            total_height = header_height + total_chart_height
+
+            # 3. Create the combined image
+            combined_image = QImage(width, total_height, QImage.Format_ARGB32)
+            combined_image.fill(Qt.white)
+            painter = QPainter(combined_image)
+
+            try:
+                painter.setRenderHint(QPainter.Antialiasing, True)
+                painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+                # Draw header
+                header_font = QFont("fccTYPO", int(32 * header_font_scale / 3.0))
+                header_font.setBold(True)
+                painter.setFont(header_font)
+                painter.setPen(QColor(0, 0, 0))
+                header_text = f"Log: {log_name} | Frequency Evolution | Date: {current_date}"
+                if author_name:
+                    header_text += f" | Author: {author_name}"
+                if drone_name:
+                    header_text += f" | Drone: {drone_name}"
+                header_rect = QRect(0, 0, width, header_height)
+                painter.fillRect(header_rect, QColor(230, 230, 240))
+                painter.drawText(header_rect, Qt.AlignCenter | Qt.AlignTop, header_text)
+                
+                settings_font = QFont("fccTYPO", int(28 * header_font_scale / 3.0))
+                settings_font.setBold(True)
+                painter.setFont(settings_font)
+                window_size = 2 ** spectrogram_widget.window_slider.value()
+                gain_value = spectrogram_widget.gain
+                settings_text = f"Window Size: {window_size} | Gain: {gain_value}x"
+                settings_rect = QRect(0, int(header_height/2), width, int(header_height/2))
+                painter.drawText(settings_rect, Qt.AlignCenter | Qt.AlignTop, settings_text)
+
+                # 4. Draw the tightly cropped pixmaps onto the combined image
+                current_y = header_height
+                for pixmap in scaled_pixmaps:
+                    painter.drawPixmap(0, current_y, pixmap)
+                    current_y += pixmap.height()
+            finally:
+                painter.end()
+
+            # 5. Save the final image
+            if use_drone and drone_name:
+                filename = f"{drone_name_filename}-{log_name}-FrequencyEvolution-{timestamp}.jpg"
+            else:
+                filename = f"{log_name}-FrequencyEvolution-{timestamp}.jpg"
+            filepath = os.path.join(export_dir, filename)
+            combined_image.save(filepath, "JPG", quality=100)
+            self.status_label.setText(f"Exported stacked Frequency Evolution plots to {export_dir} as {filename}")
+        except Exception as e:
+            import traceback
+            print(f"Error exporting frequency evolution plots: {e}\n{traceback.format_exc()}")
+            self.status_label.setText(f"Error exporting frequency evolution plots: {str(e)}")
 
 class ParametersWidget(QWidget):
     def __init__(self, feature_widget, parent=None):
@@ -2713,3 +2908,212 @@ class ParametersWidget(QWidget):
     def debug(self, level):
         levels = {"INFO": 1, "DEBUG": 2, "VERBOSE": 3}
         return levels.get(getattr(self, 'debug_level', 'INFO'), 1) >= levels.get(level, 1)
+
+class SpectrogramWidget(QWidget):
+    def __init__(self, feature_widget, parent=None):
+        super().__init__(parent)
+        self.feature_widget = feature_widget
+        self.df = None
+        self.gain = 5.0  # Default gain value
+        self.canvas_list = []
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        # Add gain control slider
+        control_layout = QHBoxLayout()
+        control_layout.setContentsMargins(10, 0, 10, 0)
+        gain_label = QLabel("Gain:")
+        gain_label.setFont(self.feature_widget.create_font('label'))
+        self.gain_slider = QSlider(Qt.Horizontal)
+        self.gain_slider.setMinimum(1)
+        self.gain_slider.setMaximum(50)
+        self.gain_slider.setValue(5)
+        self.gain_slider.setTickInterval(5)
+        self.gain_slider.setTickPosition(QSlider.TicksBelow)
+        self.gain_value_label = QLabel(f"{self.gain}x")
+        self.gain_value_label.setFont(self.feature_widget.create_font('label'))
+        self.gain_slider.valueChanged.connect(self.on_gain_changed)
+        control_layout.addWidget(gain_label)
+        control_layout.addWidget(self.gain_slider)
+        control_layout.addWidget(self.gain_value_label)
+        # Add window size slider
+        window_label = QLabel("Window Size:")
+        window_label.setFont(self.feature_widget.create_font('label'))
+        self.window_slider = QSlider(Qt.Horizontal)
+        self.window_slider.setMinimum(6)   # 2**6 = 64
+        self.window_slider.setMaximum(11)  # 2**11 = 2048
+        self.window_slider.setValue(8)     # 2**8 = 256
+        self.window_slider.setTickInterval(1)
+        self.window_slider.setTickPosition(QSlider.TicksBelow)
+        self.window_slider.valueChanged.connect(self.on_window_size_changed)
+        self.window_value_label = QLabel("256")
+        self.window_value_label.setFont(self.feature_widget.create_font('label'))
+        control_layout.addWidget(window_label)
+        control_layout.addWidget(self.window_slider)
+        control_layout.addWidget(self.window_value_label)
+        layout.addLayout(control_layout)
+
+        self.plot_container = QWidget()
+        self.plot_layout = QGridLayout(self.plot_container)
+        self.plot_layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.plot_container)
+        layout.addStretch(1)
+
+    def on_gain_changed(self, value):
+        self.gain = value
+        self.gain_value_label.setText(f"{self.gain}x")
+        # Update the plot with the new gain
+        self.update_spectrogram(self.df)
+
+    def clear_all_plots(self):
+        for canvas in self.canvas_list:
+            self.plot_layout.removeWidget(canvas)
+            canvas.setParent(None)
+            canvas.deleteLater()
+        self.canvas_list = []
+
+    def update_spectrogram(self, df, max_freq=None):
+        import matplotlib.pyplot as plt
+        from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+        from matplotlib import colors
+        from scipy.ndimage import gaussian_filter
+
+        # Set plot style for consistency
+        plt.style.use('default')
+        plt.rcParams['font.family'] = 'fccTYPO'
+        plt.rcParams['font.size'] = 10
+        
+        if df is not None:
+            self.df = df
+        if self.df is None or self.df.empty:
+            if self.feature_widget.debug('DEBUG'):
+                print("[SpectrogramWidget] DataFrame is empty or None.")
+            return
+        self.clear_all_plots()
+        axis_labels = ['Roll', 'Pitch', 'Yaw']
+        # Determine which gyro type is selected
+        gyro_type = None
+        if hasattr(self.feature_widget, 'gyro_unfilt_checkbox') and self.feature_widget.gyro_unfilt_checkbox.isChecked():
+            gyro_type = 'raw'
+        elif hasattr(self.feature_widget, 'gyro_scaled_checkbox') and self.feature_widget.gyro_scaled_checkbox.isChecked():
+            gyro_type = 'filtered'
+        else:
+            gyro_type = 'filtered'
+        vmin = 0.01  # Fixed noise floor value
+        
+        # Calculate Nyquist frequency from data
+        time = self.df['time'].values.astype(float)
+        if time.max() > 1e6:
+            time = time / 1_000_000.0
+        elif time.max() > 1e3:
+            time = time / 1_000.0
+        time = time - time.min()
+        dt = np.mean(np.diff(time))
+        fs = 1.0 / dt if dt > 0 else 0.0
+        nyquist = fs / 2
+        nperseg = 2 ** self.window_slider.value()
+        noverlap = int(nperseg * 0.75)
+        
+        # First pass: calculate all spectrograms to find global min/max values
+        all_results = []
+        global_vmax = vmin
+        global_f_max = 0
+        
+        for axis_idx, axis_name in enumerate(axis_labels):
+            result = calculate_spectrogram(self.df, axis_idx, gyro_type=gyro_type, max_freq=nyquist, gain=self.gain, clip_seconds=1.0, nperseg=nperseg, noverlap=noverlap)
+            if result is not None:
+                t, f, Sxx = result['t'], result['f'], result['Sxx']
+                Sxx_smooth = gaussian_filter(Sxx, sigma=1)
+                local_vmax = np.max(Sxx_smooth) + 1e-6
+                global_vmax = max(global_vmax, local_vmax)
+                global_f_max = max(global_f_max, f.max())
+                all_results.append({
+                    'axis_idx': axis_idx,
+                    'axis_name': axis_name,
+                    't': t,
+                    'f': f,
+                    'Sxx_smooth': Sxx_smooth
+                })
+        
+        # Ensure we have a valid vmax
+        if vmin >= global_vmax:
+            global_vmax = vmin * 10 if vmin > 0 else 1e-5
+        
+        # Second pass: create plots with consistent limits
+        for result_data in all_results:
+            axis_idx = result_data['axis_idx']
+            axis_name = result_data['axis_name']
+            t = result_data['t']
+            f = result_data['f']
+            Sxx_smooth = result_data['Sxx_smooth']
+            
+            # Use constrained_layout to prevent label cropping
+            fig, ax = plt.subplots(figsize=(8, 5.5), constrained_layout=True)
+            plot_label = f'Gyro (raw) {axis_name}' if gyro_type == 'raw' else f'Gyro (filtered) {axis_name}'
+            extent = [t.min(), t.max(), f.min(), f.max()]
+            im = ax.imshow(Sxx_smooth + 1e-12, aspect='auto', origin='lower',
+                          extent=extent,
+                          norm=colors.LogNorm(vmin=vmin, vmax=global_vmax),
+                          cmap='inferno', interpolation='bilinear')
+            ax.set_title(f"Frequency Evolution {plot_label}", color='black', loc='left', pad=5)
+            ax.set_ylabel('Frequency (Hz)', color='black')
+            ax.set_xlabel('Time (s)', color='black')
+            # Use consistent y-axis limits for all plots
+            ax.set_ylim(0, global_f_max)
+            ax.set_facecolor('white')
+            ax.grid(True, color='gray', alpha=0.5, linestyle='-')
+            ax.tick_params(axis='x', colors='black')
+            ax.tick_params(axis='y', colors='black')
+            for spine in ax.spines.values():
+                spine.set_color('black')
+            
+            canvas = FigureCanvas(fig)
+            canvas.setCursor(Qt.CrossCursor)
+
+            # Add tooltip functionality
+            def make_motion_event_handler(canvas, fig, t_data, f_data, sxx_data):
+                def on_motion(event):
+                    if event.inaxes:
+                        try:
+                            # Map mouse coordinates to data indices
+                            time_val = event.xdata
+                            freq_val = event.ydata
+                            
+                            time_idx = np.argmin(np.abs(t_data - time_val))
+                            freq_idx = np.argmin(np.abs(f_data - freq_val))
+                            
+                            intensity = sxx_data[freq_idx, time_idx]
+                            
+                            # Format the tooltip text
+                            tooltip_text = (
+                                f"Time: {time_val:.3f} s\n"
+                                f"Frequency: {freq_val:.1f} Hz\n"
+                                f"Intensity: {intensity:.4f}"
+                            )
+                            
+                            # Use the event's GUI coordinates to position the tooltip
+                            QToolTip.showText(event.guiEvent.globalPos(), tooltip_text, canvas)
+                        except (ValueError, IndexError):
+                            # Hide tooltip if there's an error or mouse is out of data bounds
+                            QToolTip.hideText()
+                    else:
+                        QToolTip.hideText()
+                return on_motion
+
+            # Connect the event handler to the canvas
+            canvas.mpl_connect(
+                'motion_notify_event', 
+                make_motion_event_handler(canvas, fig, t, f, Sxx_smooth)
+            )
+            
+            self.plot_layout.addWidget(canvas, axis_idx, 0)
+            self.canvas_list.append(canvas)
+
+    def on_window_size_changed(self, value):
+        nperseg = 2 ** value
+        self.window_value_label.setText(str(nperseg))
+        self.update_spectrogram(self.df)

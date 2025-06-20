@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QFont, QPainter
 from PySide6.QtCore import Qt, QMargins
 from PySide6.QtCharts import QChart
-from ui.widgets import FeatureSelectionWidget, ControlWidget, SpectralAnalyzerWidget, StepResponseWidget, FrequencyAnalyzerWidget, PlotExportWidget, ParametersWidget
+from ui.widgets import FeatureSelectionWidget, ControlWidget, SpectralAnalyzerWidget, StepResponseWidget, FrequencyAnalyzerWidget, PlotExportWidget, ParametersWidget, SpectrogramWidget
 from .chart_manager import ChartManager
 from utils.data_processor import normalize_time_data, get_clean_name, decimate_data
 from utils.config import FONT_CONFIG
@@ -101,10 +101,13 @@ class FL1GHTViewer(QWidget):
         # Step response tab
         self.step_response_widget = StepResponseWidget(self.feature_widget)
         
-        # Frequency analyzer tab
+        # Noise analysis tab
         self.frequency_analyzer_widget = FrequencyAnalyzerWidget(self.feature_widget)
         
-        # Parameters tab
+        # Frequency Evolution tab
+        self.spectrogram_widget = SpectrogramWidget(self.feature_widget)
+        
+        # Drone Config tab
         self.parameters_widget = ParametersWidget(self.feature_widget)
         
         # Export tab
@@ -112,10 +115,11 @@ class FL1GHTViewer(QWidget):
         
         # Add tabs
         self.tab_widget.addTab(time_domain_widget, "Time Domain")
-        self.tab_widget.addTab(self.spectral_widget, "Spectral Analysis")
+        self.tab_widget.addTab(self.spectral_widget, "Frequency Domain")
         self.tab_widget.addTab(self.step_response_widget, "Step Response")
-        self.tab_widget.addTab(self.frequency_analyzer_widget, "Frequency Analyzer")
-        self.tab_widget.addTab(self.parameters_widget, "Parameters")
+        self.tab_widget.addTab(self.frequency_analyzer_widget, "Noise Analysis")
+        self.tab_widget.addTab(self.spectrogram_widget, "Frequency Evolution")
+        self.tab_widget.addTab(self.parameters_widget, "Drone Config")
         self.tab_widget.addTab(self.export_widget, "Export Plots")
         
         right_layout.addWidget(self.tab_widget)
@@ -239,7 +243,7 @@ class FL1GHTViewer(QWidget):
         if is_spectral:
             max_selection = 2
             selection_text = "flights"
-            tab_note = "spectral analysis"
+            tab_note = "frequency domain"
         elif is_step_response:
             max_selection = 5
             selection_text = "flights"
@@ -251,7 +255,7 @@ class FL1GHTViewer(QWidget):
         
         label = QLabel(f"File '{filename}' contains {len(flights)} flight logs.\nPlease select which {selection_text} to load:")
         if tab_note:
-            label.setText(label.text() + f"\n(Note: Maximum {max_selection} flights can be selected for {tab_note})")
+            label.setText(label.text() + f"\n(Note: Maximum {max_selection} flights can be selected for {tab_note}.")
         label.setFont(header_font)
         layout.addWidget(label)
         
@@ -273,7 +277,7 @@ class FL1GHTViewer(QWidget):
         if list_widget.count() > 0:
             list_widget.setCurrentRow(0)
         
-        # Add selection change handler for spectral analysis or step response
+        # Add selection change handler for frequency domain or step response
         if is_spectral or is_step_response:
             def on_selection_changed():
                 selected = list_widget.selectedItems()
@@ -549,7 +553,7 @@ class FL1GHTViewer(QWidget):
                                 self.actual_time_range = (df['time'].min(), df['time'].max())
                                 self.chart_manager.actual_time_max = float(df['time'].max())
                                 
-                                # Clear existing frequency analyzer plots but don't update with new data
+                                # Clear existing noise analysis plots but don't update with new data
                                 self.frequency_analyzer_widget.clear_all_plots()
                             
                             files_loaded += 1
@@ -666,7 +670,7 @@ class FL1GHTViewer(QWidget):
                             self.actual_time_range = (df['time'].min(), df['time'].max())
                             self.chart_manager.actual_time_max = float(df['time'].max())
                             
-                            # Clear existing frequency analyzer plots but don't update with new data
+                            # Clear existing noise analysis plots but don't update with new data
                             self.frequency_analyzer_widget.clear_all_plots()
                         
                         files_loaded += 1
@@ -694,7 +698,7 @@ class FL1GHTViewer(QWidget):
         # Check if we have logs selected in the list widget
         if hasattr(self.feature_widget, 'selected_logs') and self.feature_widget.selected_logs:
             current_tab = self.tab_widget.currentIndex()
-            if current_tab == 1:  # Spectral Analysis
+            if current_tab == 1:  # Frequency Domain
                 # Always clear the spectrum plot before plotting
                 for (chart_view_full, chart_view_zoom) in self.spectral_widget.chart_views:
                     chart_view_full.chart().removeAllSeries()
@@ -723,8 +727,8 @@ class FL1GHTViewer(QWidget):
             if len(self.feature_widget.selected_logs) == 1:
                 log_name = self.feature_widget.selected_logs[0]
                 self.feature_widget.current_log = self.feature_widget.loaded_logs[log_name]
-                # Update parameters tab if it's active
-                if current_tab == 4:  # Parameters tab
+                # Update drone config tab if it's active
+                if current_tab == 5:  # Drone Config tab (changed from 4 to 5)
                     self.parameters_widget.update_parameters([log_name])
         # Check if we have a current log
         if not hasattr(self.feature_widget, 'current_log') or self.feature_widget.current_log is None:
@@ -732,10 +736,12 @@ class FL1GHTViewer(QWidget):
             return
         # Only plot for the active tab
         current_tab = self.tab_widget.currentIndex()
-        # 0 = Time Domain, 1 = Spectral Analysis, 2 = Step Response, 3 = Frequency Analyzer, 4 = Parameters
+        # 0 = Time Domain, 1 = Frequency Domain, 2 = Step Response, 3 = Noise Analysis, 4 = Frequency Evolution, 5 = Drone Config, 6 = Export
         if current_tab == 0:
             try:
                 self.control_widget.progress_bar.setVisible(True)
+                # Check for missing features and show warnings
+                self.feature_widget.check_missing_features()
                 # Get selected features from the feature widget
                 selected_features = self.feature_widget.get_selected_features()
                 if not selected_features:
@@ -755,10 +761,27 @@ class FL1GHTViewer(QWidget):
                 QMessageBox.critical(self, "Error", f"Failed to plot data: {str(e)}")
                 self.control_widget.progress_bar.setVisible(False)
         elif current_tab == 1:
-            # Spectral analysis tab
-            # Already handled above
-            pass
+            # Check for missing features and show warnings
+            self.feature_widget.check_missing_features()
+            # Set spectral defaults to select gyro (raw) and gyro (filtered)
+            self.set_spectral_defaults()
+            # Enable checkboxes for frequency domain except motors and throttle
+            # Enforce 2-log limit for frequency domain
+            self.feature_widget._set_checkboxes_enabled(True)
+            self.feature_widget.motor_checkbox.setEnabled(False)
+            self.feature_widget.throttle_checkbox.setEnabled(False)
+            if hasattr(self.feature_widget, 'selected_logs') and len(self.feature_widget.selected_logs) > 2:
+                # Keep only the first 2 selected logs
+                self.feature_widget.selected_logs = self.feature_widget.selected_logs[:2]
+                # Update the list widget selection
+                self.feature_widget.logs_list.clearSelection()
+                for i in range(self.feature_widget.logs_list.count()):
+                    item = self.feature_widget.logs_list.item(i)
+                    if item.text() in self.feature_widget.selected_logs:
+                        item.setSelected(True)
         elif current_tab == 2:
+            # Check for missing features and show warnings
+            self.feature_widget.check_missing_features()
             # Step response tab
             # Update step response analysis
             line_width = getattr(self.feature_widget, 'current_line_width', 1.0)
@@ -767,7 +790,7 @@ class FL1GHTViewer(QWidget):
             if hasattr(self.feature_widget, 'selected_logs') and self.feature_widget.selected_logs:
                 log_name = self.feature_widget.selected_logs[0]
             self.step_response_widget.update_step_response(self.feature_widget.current_log, line_width=line_width, log_name=log_name, log_index=0)
-        elif current_tab == 3:  # Frequency Analyzer
+        elif current_tab == 3:  # Noise Analysis
             try:
                 # Calculate the Nyquist frequency (half of the sampling rate)
                 time_data = self.feature_widget.current_log['time'].values.astype(float)
@@ -790,14 +813,27 @@ class FL1GHTViewer(QWidget):
                 self.frequency_analyzer_widget.update_frequency_plots(self.feature_widget.current_log, max_freq=max_freq)
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to update frequency plots: {str(e)}")
-        elif current_tab == 4:  # Parameters tab
-            # Update parameters display
+        elif current_tab == 4:  # Frequency Evolution
+            # Check for missing features and show warnings
+            self.feature_widget.check_missing_features()
+            try:
+                # Clear existing plots first
+                self.spectrogram_widget.clear_all_plots()
+                # Update spectrogram with current log data
+                self.spectrogram_widget.update_spectrogram(self.feature_widget.current_log)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to update spectrogram: {str(e)}")
+        elif current_tab == 5:  # Drone Config (changed from 4 to 5)
+            # Update drone config display
             if hasattr(self.feature_widget, 'selected_logs') and self.feature_widget.selected_logs:
                 self.parameters_widget.update_parameters(self.feature_widget.selected_logs[:2])
             self.feature_widget.legend_group.setVisible(False)
+        elif current_tab == 6:  # Export (changed from 5 to 6)
+            # Export functionality is handled in on_tab_changed
+            pass
 
     def update_spectral_analysis(self):
-        """Update the spectral analysis when inputs change"""
+        """Update the frequency domain when inputs change"""
         if hasattr(self, 'df') and not self.df.empty:
             self.spectral_widget.update_spectrum(self.df)
 
@@ -889,14 +925,55 @@ class FL1GHTViewer(QWidget):
         if hasattr(self.feature_widget, 'throttle_checkbox'):
             self.feature_widget.throttle_checkbox.setChecked(True)
 
+    def set_spectrogram_checkbox_states(self):
+        # Enable only gyro checkboxes for frequency evolution, disable others
+        if hasattr(self.feature_widget, 'gyro_unfilt_checkbox'):
+            self.feature_widget.gyro_unfilt_checkbox.setEnabled(True)
+        if hasattr(self.feature_widget, 'gyro_scaled_checkbox'):
+            self.feature_widget.gyro_scaled_checkbox.setEnabled(True)
+        if hasattr(self.feature_widget, 'pid_p_checkbox'):
+            self.feature_widget.pid_p_checkbox.setEnabled(False)
+        if hasattr(self.feature_widget, 'pid_i_checkbox'):
+            self.feature_widget.pid_i_checkbox.setEnabled(False)
+        if hasattr(self.feature_widget, 'pid_d_checkbox'):
+            self.feature_widget.pid_d_checkbox.setEnabled(False)
+        if hasattr(self.feature_widget, 'pid_f_checkbox'):
+            self.feature_widget.pid_f_checkbox.setEnabled(False)
+        if hasattr(self.feature_widget, 'setpoint_checkbox'):
+            self.feature_widget.setpoint_checkbox.setEnabled(False)
+        if hasattr(self.feature_widget, 'rc_checkbox'):
+            self.feature_widget.rc_checkbox.setEnabled(False)
+        if hasattr(self.feature_widget, 'throttle_checkbox'):
+            self.feature_widget.throttle_checkbox.setEnabled(False)
+        if hasattr(self.feature_widget, 'motor_checkbox'):
+            self.feature_widget.motor_checkbox.setEnabled(False)
+
+    def select_first_log_if_multiple(self):
+        """Automatically select the first log if multiple logs are selected for single-log tabs"""
+        if hasattr(self.feature_widget, 'selected_logs') and len(self.feature_widget.selected_logs) > 1:
+            # Keep only the first selected log
+            first_log = self.feature_widget.selected_logs[0]
+            self.feature_widget.selected_logs = [first_log]
+            # Update the list widget selection
+            self.feature_widget.logs_list.clearSelection()
+            for i in range(self.feature_widget.logs_list.count()):
+                item = self.feature_widget.logs_list.item(i)
+                if item.text() == first_log:
+                    item.setSelected(True)
+                    break
+            # Update current log
+            if first_log in self.feature_widget.loaded_logs:
+                self.feature_widget.current_log = self.feature_widget.loaded_logs[first_log]
+                self.feature_widget.df = self.feature_widget.current_log
+
     def on_tab_changed(self, index):
         # Store the previous tab index before any logic
         prev_tab = self.previous_tab_index
         self.previous_tab_index = index
-        # 0 = Time Domain, 1 = Spectral Analysis, 2 = Step Response, 3 = Frequency Analyzer, 4 = Parameters, 5 = Export
-        if index == 5:  # Export tab
-            # Only export if we're coming from a valid tab (0-3)
-            if 0 <= prev_tab <= 3:
+        # 0 = Time Domain, 1 = Frequency Domain, 2 = Step Response, 3 = Noise Analysis, 4 = Frequency Evolution, 5 = Drone Config, 6 = Export
+        if index == 6:  # Export tab (changed from 5 to 6)
+            # Only export if we're coming from a valid tab (0-4)
+            if 0 <= prev_tab <= 4:
                 self.export_widget.set_previous_tab(prev_tab)
                 self.export_widget.export_plots()
             else:
@@ -907,19 +984,21 @@ class FL1GHTViewer(QWidget):
             self.feature_widget.legend_group.setVisible(True)
             # Enable checkboxes for time domain
             self.feature_widget._set_checkboxes_enabled(True)
+            # Select first log if multiple are selected
+            self.select_first_log_if_multiple()
             # Update plot for time domain if we have data
             if hasattr(self, 'df') and self.df is not None:
                 self.plot_selected()
-        elif index == 1:  # Spectral Analysis
+        elif index == 1:  # Frequency Domain
+            # Check for missing features and show warnings
+            self.feature_widget.check_missing_features()
+            # Set spectral defaults to select gyro (raw) and gyro (filtered)
             self.set_spectral_defaults()
-            self.feature_widget.set_spectral_mode(True)
-            self.feature_widget.legend_group.setVisible(True)
-            # Enable checkboxes for spectral analysis except motors and throttle
+            # Enable checkboxes for frequency domain except motors and throttle
+            # Enforce 2-log limit for frequency domain
             self.feature_widget._set_checkboxes_enabled(True)
-            # Disable motor and throttle checkboxes
             self.feature_widget.motor_checkbox.setEnabled(False)
             self.feature_widget.throttle_checkbox.setEnabled(False)
-            # Enforce 2-log limit for spectral analysis
             if hasattr(self.feature_widget, 'selected_logs') and len(self.feature_widget.selected_logs) > 2:
                 # Keep only the first 2 selected logs
                 self.feature_widget.selected_logs = self.feature_widget.selected_logs[:2]
@@ -938,19 +1017,51 @@ class FL1GHTViewer(QWidget):
             # Clear any existing legends in step response charts
             if hasattr(self, 'step_response_widget'):
                 self.step_response_widget.clear_all_legends()
-        elif index == 3:  # Frequency Analyzer
+        elif index == 3:  # Noise Analysis
+            # Check for missing features and show warnings
             self.set_frequency_analyzer_defaults()
             self.feature_widget.set_time_domain_mode(False)
             self.feature_widget.legend_group.setVisible(False)
-            # Disable checkboxes for frequency analyzer
+            # Disable checkboxes for noise analysis
             self.feature_widget._set_checkboxes_enabled(False)
-            # Set single selection mode for frequency analyzer
+            # Set single selection mode for noise analysis
+            # No longer auto-update noise analysis plots
             self.feature_widget.logs_list.setSelectionMode(QListWidget.SingleSelection)
-            # No longer auto-update frequency analyzer plots
-            # Let user click "Show Plot" button instead
-        elif index == 4:  # Parameters
+            # Select first log if multiple are selected
+            self.select_first_log_if_multiple()
+        elif index == 4:  # Frequency Evolution
+            self.set_spectrogram_checkbox_states()
+            # Only auto-select Gyro (raw) and deselect others ONCE, when entering the tab
+            if not hasattr(self, '_spectrogram_tab_initialized') or not self._spectrogram_tab_initialized:
+                if hasattr(self.feature_widget, 'gyro_unfilt_checkbox'):
+                    self.feature_widget.gyro_unfilt_checkbox.setChecked(True)
+                if hasattr(self.feature_widget, 'gyro_scaled_checkbox'):
+                    self.feature_widget.gyro_scaled_checkbox.setChecked(False)
+                if hasattr(self.feature_widget, 'pid_p_checkbox'):
+                    self.feature_widget.pid_p_checkbox.setChecked(False)
+                if hasattr(self.feature_widget, 'pid_i_checkbox'):
+                    self.feature_widget.pid_i_checkbox.setChecked(False)
+                if hasattr(self.feature_widget, 'pid_d_checkbox'):
+                    self.feature_widget.pid_d_checkbox.setChecked(False)
+                if hasattr(self.feature_widget, 'pid_f_checkbox'):
+                    self.feature_widget.pid_f_checkbox.setChecked(False)
+                if hasattr(self.feature_widget, 'setpoint_checkbox'):
+                    self.feature_widget.setpoint_checkbox.setChecked(False)
+                if hasattr(self.feature_widget, 'rc_checkbox'):
+                    self.feature_widget.rc_checkbox.setChecked(False)
+                if hasattr(self.feature_widget, 'throttle_checkbox'):
+                    self.feature_widget.throttle_checkbox.setChecked(False)
+                if hasattr(self.feature_widget, 'motor_checkbox'):
+                    self.feature_widget.motor_checkbox.setChecked(False)
+                self._spectrogram_tab_initialized = True
+            self.feature_widget.legend_group.setVisible(False)
+            self.feature_widget.logs_list.setSelectionMode(QListWidget.SingleSelection)
+            # Select first log if multiple are selected
+            self.select_first_log_if_multiple()
+            # Removed auto-plotting - plots will only be generated when user clicks "Show Plot" button
+        elif index == 5:  # Drone Config (changed from 4 to 5)
             self.feature_widget._set_checkboxes_enabled(False)
-            # Allow up to 2 logs to be selected in Parameters tab
+            # Allow up to 2 logs to be selected in Drone Config tab
             self.feature_widget.logs_list.setSelectionMode(QListWidget.ExtendedSelection)
             self.feature_widget.legend_group.setVisible(False)
 
@@ -1021,7 +1132,7 @@ class FL1GHTViewer(QWidget):
             QMessageBox.information(self, "Info", "Multi-log plotting is currently not available for this tab.") 
 
     def plot_multiple_logs_spectral(self):
-        """Plot spectra for multiple selected logs in the Spectral Analysis tab."""
+        """Plot spectra for multiple selected logs in the Frequency Domain tab."""
         try:
             # Get selected features from the feature widget
             selected_features = self.feature_widget.get_selected_features()

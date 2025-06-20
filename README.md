@@ -16,24 +16,27 @@ A modern, feature-rich blackbox log viewer for FPV drone flight data analysis. D
 
 - **Time Domain Analyzer**
   - View Roll, Pitch, Yaw, Throttle and more simultaneously in time
-- **Spectral Analyzer**
+- **Frequency Domain Analyzer**
   - Power spectral density (PSD) for Roll, Pitch, and Yaw
   - Dual plots: full range and 0–100 Hz zoom
   - Interactive tooltips and adjustable smoothing
 - **Step Response Analysis**
   - Visualize step response for all axes
   - Interactive tooltips and annotation box
-- **Frequency Analyzer**
+- **Noise Analysis**
   - Advanced noise analysis with heatmap visualization
   - Six-panel layout for Roll, Pitch, Yaw (filtered/raw/D-Term)
   - Logarithmic frequency scaling and data normalization
+- **Frequency Evolution**
+  - Spectrogram visualization showing frequency content over time
+  - Heatmap display with configurable window size control
+
 - **Export Plots**
   - One-click export of all plots as 1200 DPI JPEG images
   - Stacked layout, detailed headers, and timestamped filenames
   - Antialiased, publication-quality output
-- **Parameters Tab**
+- **Drone Config Tab**
   - View all parsed Betaflight `.bbl` header parameters in a clean, scrollable table
-  - Useful for quickly checking firmware, PID, hardware, and other configuration values embedded in your log file
   - **Multi-log comparison:** Select up to two logs to compare parameters side-by-side, with options to highlight or show only differences.
 
 - **Interactive Controls**
@@ -44,15 +47,17 @@ A modern, feature-rich blackbox log viewer for FPV drone flight data analysis. D
   - Minimal dependencies
 - **Multi-Log Support**
   - Load and select multiple logs for analysis
-  - Plot multiple logs simultaneously in Spectral Analysis and Step Response tabs
+  - Plot multiple logs simultaneously in Frequency Domain and Step Response tabs
 - **Multi-Flight BBL Support**
   - Load and analyze individual flights from multi-flight BBL files
   - Flight selection dialog with duration and size information
   - Support for different flight limits per analysis mode:
     - Time Domain: Single flight
-    - Spectral Analysis: Up to 2 flights
+    - Frequency Domain: Up to 2 flights
     - Step Response: Up to 5 flights
-    - Frequency Analyzer: Single flight
+    - Noise Analysis: Single flight
+    - Frequency Evolution: Single flight
+    - Drone Config: Up to 2 flights
 
 ---
 
@@ -63,10 +68,7 @@ A modern, feature-rich blackbox log viewer for FPV drone flight data analysis. D
 - [pandas](https://pandas.pydata.org/) >= 1.3.0 – Data manipulation and CSV parsing
 - [numpy](https://numpy.org/) >= 1.21.0 – Numerical computing and array operations
 - [matplotlib](https://matplotlib.org/) >= 3.4.0 – Plotting backend (for some visualizations)
-- [scipy](https://scipy.org/) >= 1.7.0 – Signal processing (FFT, spectral analysis)
-- [customtkinter](https://github.com/TomSchimansky/CustomTkinter) >= 5.2.0
-- [rasterio](https://rasterio.readthedocs.io/) >= 1.3.0
-- [Pillow](https://python-pillow.org/) >= 9.0.0
+- [scipy](https://scipy.org/) >= 1.7.0 – Signal processing (FFT, frequency domain analysis)
 - `blackbox_decode` – CLI tool for decoding `.bbl` to `.csv` (included in `tools/`)
 
 ---

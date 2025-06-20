@@ -2,6 +2,47 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2025-06-21
+
+### Added
+-**Frequency Evolution Tab**: New spectrogram visualization for time-frequency analysis:
+  - Heatmap display showing frequency content over time
+  - Configurable window size control
+  - Gain control for adjusting color intensity
+  - Smoothing and interpolation options for enhanced visualization
+  - Interactive tooltips showing time, frequency, and power values
+- **Missing Data Warnings**: Warning dialogs when selected features are not available in the current log:
+  - Shows clear warning message listing which selected features are missing
+  - Prevents confusion when plots appear empty due to missing data
+  - Covers all feature types: Gyro (raw/filtered), PID terms, Setpoint, RC Commands, Throttle, and Motor Outputs
+  - Integrated into Time Series, Frequency Domain, Step Response, and Frequency Evolution tabs
+- **Tab Renaming**: Improved clarity with new tab names:
+  - "Time Domain" → "Time Series"
+  - "Spectral Analysis" → "Frequency Domain"
+  - "Frequency Analyzer" → "Noise Analysis"
+  - "Parameters" → "Drone Config"
+- **Smart Log Selection**: Automatic log selection management when switching tabs:
+  - Single-log tabs (Time Series, Noise Analysis, Frequency Evolution) automatically select the first log when multiple are selected
+  - Multi-log tabs (Frequency Domain: up to 2, Step Response: up to 5, Drone Config: up to 2) maintain appropriate selection limits
+  - Improved user experience with predictable log selection behavior
+
+### Improved
+- **UI/UX**: Better checkbox state management and UI responsiveness
+- Enhanced error handling and user feedback
+- **Code Cleanup:** Removed unused dependencies (`customtkinter`, `rasterio`, `Pillow`), unused class (`StepResponseCalculator`), and unused imports. Verified that all remaining classes and methods are actively used in the codebase
+
+### Fixed
+- Fixed tab switching to maintain clean state between different analysis modes
+- Fixed signal disconnection warnings
+
+### Changed
+- Code organization and documentation updates throughout the codebase
+- Plot styling improvements with white background and black text for better readability
+- General UI/UX improvements for Drone Config tab, legend visibility, and button styling
+- Logging configuration is now set dynamically at app startup based on settings.json, ensuring consistent debug output control
+
+---
+
 ## [0.5.1] - 2025-06-20
 
 ### Added
