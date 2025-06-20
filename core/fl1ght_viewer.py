@@ -146,17 +146,20 @@ class FL1GHTViewer(QWidget):
         lines = error_text.split('\n')
         in_table = False
         
-        print(f"[DEBUG] Extracting flights from error output")
+        if getattr(self.feature_widget, 'debug_verbose', False):
+            print(f"[DEBUG] Extracting flights from error output")
         
         for line in lines:
             line = line.strip()
             if "Index" in line and "Start offset" in line and "Size" in line:
                 in_table = True
-                print(f"[DEBUG] Found table header: {line}")
+                if getattr(self.feature_widget, 'debug_verbose', False):
+                    print(f"[DEBUG] Found table header: {line}")
                 continue
             
             if in_table and line and line[0].isdigit():
-                print(f"[DEBUG] Parsing flight line: {line}")
+                if getattr(self.feature_widget, 'debug_verbose', False):
+                    print(f"[DEBUG] Parsing flight line: {line}")
                 parts = line.split()
                 if len(parts) >= 3:  # At least index, offset, and size
                     try:
@@ -168,12 +171,15 @@ class FL1GHTViewer(QWidget):
                             'start_offset': start_offset,
                             'size': size
                         })
-                        print(f"[DEBUG] Added flight: index={index}, size={size}")
+                        if getattr(self.feature_widget, 'debug_verbose', False):
+                            print(f"[DEBUG] Added flight: index={index}, size={size}")
                     except (ValueError, IndexError) as e:
-                        print(f"[DEBUG] Failed to parse flight line: {e}")
+                        if getattr(self.feature_widget, 'debug_verbose', False):
+                            print(f"[DEBUG] Failed to parse flight line: {e}")
                         continue
         
-        print(f"[DEBUG] Found {len(flights)} flights")
+        if getattr(self.feature_widget, 'debug_verbose', False):
+            print(f"[DEBUG] Found {len(flights)} flights")
         return flights if flights else None
 
     def estimate_flight_duration(self, flight_size):
@@ -309,13 +315,15 @@ class FL1GHTViewer(QWidget):
         
         # Show dialog and get selected indices
         result = dialog.exec()
-        print(f"[DEBUG] Dialog result: {result}")
+        if getattr(self.feature_widget, 'debug_verbose', False):
+            print(f"[DEBUG] Dialog result: {result}")
         
         if result == QDialog.Accepted and list_widget.selectedItems():
             selected_indices = [item.data(Qt.UserRole) for item in list_widget.selectedItems()]
             if (is_spectral or is_step_response) and len(selected_indices) > max_selection:
                 selected_indices = selected_indices[:max_selection]  # Take only first N selections
-            print(f"[DEBUG] Selected flight indices: {selected_indices}")
+            if getattr(self.feature_widget, 'debug_verbose', False):
+                print(f"[DEBUG] Selected flight indices: {selected_indices}")
             return selected_indices
         
         return None
@@ -340,7 +348,8 @@ class FL1GHTViewer(QWidget):
                 filename = os.path.basename(file_path)
                 base_filename = os.path.splitext(filename)[0]
                 
-                print(f"[DEBUG] Processing file: {filename}")
+                if getattr(self.feature_widget, 'debug_verbose', False):
+                    print(f"[DEBUG] Processing file: {filename}")
                 
                 # Check if this log is already loaded
                 if filename in self.feature_widget.loaded_logs:
@@ -353,9 +362,11 @@ class FL1GHTViewer(QWidget):
                 d_min_vals = {'roll': None, 'pitch': None, 'yaw': None}
                 try:
                     with open(file_path, 'r', encoding='latin-1', errors='ignore') as f:
-                        print(f"[DEBUG] Reading BBL header from {filename}")
+                        if getattr(self.feature_widget, 'debug_verbose', False):
+                            print(f"[DEBUG] Reading BBL header from {filename}")
                         for i, line in enumerate(f):
-                            print(f"[DEBUG] Line {i}: {line.strip()}")  # Debug print
+                            if getattr(self.feature_widget, 'debug_verbose', False):
+                                print(f"[DEBUG] Line {i}: {line.strip()}")  # Debug print
                             if 'rollPID:' in line:
                                 pid_vals['roll'] = line.split('rollPID:')[1].strip().split()[0]
                             if 'pitchPID:' in line:
@@ -375,14 +386,16 @@ class FL1GHTViewer(QWidget):
                             if i > 100:  # Only read first 100 lines of header
                                 break
                 except Exception as e:
-                    print(f"[DEBUG] Could not parse PID from .bbl: {e}")
+                    if getattr(self.feature_widget, 'debug_verbose', False):
+                        print(f"[DEBUG] Could not parse PID from .bbl: {e}")
                 
                 # Get the path to the blackbox decoder tool
                 decoder_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "tools", "blackbox_decode")
                 
                 # First try to run the decoder without an index to see if it contains multiple flights
                 initial_cmd = [decoder_path, '--stdout', '--unit-rotation', 'deg/s', file_path]
-                print(f"[DEBUG] Running initial decoder command: {' '.join(initial_cmd)}")
+                if getattr(self.feature_widget, 'debug_verbose', False):
+                    print(f"[DEBUG] Running initial decoder command: {' '.join(initial_cmd)}")
                 
                 initial_result = subprocess.run(
                     initial_cmd,
@@ -395,7 +408,8 @@ class FL1GHTViewer(QWidget):
                 
                 # Check if this is a multi-flight file
                 if initial_result.returncode != 0 and "This file contains multiple flight logs" in initial_result.stderr:
-                    print(f"[DEBUG] Multiple flights detected in error output")
+                    if getattr(self.feature_widget, 'debug_verbose', False):
+                        print(f"[DEBUG] Multiple flights detected in error output")
                     
                     # Extract flight information from the error output
                     flights = self.extract_flights_from_error(initial_result.stderr)
@@ -410,7 +424,8 @@ class FL1GHTViewer(QWidget):
                     
                     if not selected_indices:
                         # User canceled, skip this file
-                        print(f"[DEBUG] User canceled flight selection")
+                        if getattr(self.feature_widget, 'debug_verbose', False):
+                            print(f"[DEBUG] User canceled flight selection")
                         continue
                     
                     # Process each selected flight
@@ -420,12 +435,14 @@ class FL1GHTViewer(QWidget):
                         
                         # Check if this log is already loaded
                         if display_filename in self.feature_widget.loaded_logs:
-                            print(f"[DEBUG] Flight {display_filename} already loaded, skipping")
+                            if getattr(self.feature_widget, 'debug_verbose', False):
+                                print(f"[DEBUG] Flight {display_filename} already loaded, skipping")
                             continue
                         
                         # Now run the decoder with the selected index
                         decoder_cmd = [decoder_path, '--stdout', '--unit-rotation', 'deg/s', '--index', str(selected_index), file_path]
-                        print(f"[DEBUG] Running decoder with index {selected_index}: {' '.join(decoder_cmd)}")
+                        if getattr(self.feature_widget, 'debug_verbose', False):
+                            print(f"[DEBUG] Running decoder with index {selected_index}: {' '.join(decoder_cmd)}")
                         
                         result = subprocess.run(
                             decoder_cmd,
@@ -435,16 +452,19 @@ class FL1GHTViewer(QWidget):
                         
                         if result.returncode != 0:
                             error_msg = result.stderr.strip()
-                            print(f"[DEBUG] Decoder error with index: {error_msg}")
+                            if getattr(self.feature_widget, 'debug_verbose', False):
+                                print(f"[DEBUG] Decoder error with index: {error_msg}")
                             QMessageBox.critical(self, "Error", f"Failed to decode BBL file with index {selected_index}: {error_msg}")
                             continue
                         
                         if not result.stdout.strip():
-                            print(f"[DEBUG] No output from decoder with index")
+                            if getattr(self.feature_widget, 'debug_verbose', False):
+                                print(f"[DEBUG] No output from decoder with index")
                             QMessageBox.warning(self, "Warning", f"No data was decoded from flight {selected_index}")
                             continue
                         
-                        print(f"[DEBUG] Successfully decoded flight {selected_index}")
+                        if getattr(self.feature_widget, 'debug_verbose', False):
+                            print(f"[DEBUG] Successfully decoded flight {selected_index}")
                         stdout_data = result.stdout
                         
                         # Create a temporary file to store the CSV data
@@ -478,21 +498,24 @@ class FL1GHTViewer(QWidget):
                             if d_min_vals['yaw']:
                                 df['yawDMin'] = int(d_min_vals['yaw'])
                             
-                            print(f"[DEBUG] Added feed forward weights to DataFrame: roll={ff_weights['roll']}, pitch={ff_weights['pitch']}, yaw={ff_weights['yaw']}")
-                            print(f"[DEBUG] Added d_min to DataFrame: roll={d_min_vals['roll']}, pitch={d_min_vals['pitch']}, yaw={d_min_vals['yaw']}")
+                            if getattr(self.feature_widget, 'debug_verbose', False):
+                                print(f"[DEBUG] Added feed forward weights to DataFrame: roll={ff_weights['roll']}, pitch={ff_weights['pitch']}, yaw={ff_weights['yaw']}")
+                                print(f"[DEBUG] Added d_min to DataFrame: roll={d_min_vals['roll']}, pitch={d_min_vals['pitch']}, yaw={d_min_vals['yaw']}")
                             
                             # Strip leading/trailing spaces from all column names
                             df.columns = df.columns.str.strip()
                             
                             if df.empty:
-                                print(f"[DEBUG] DataFrame is empty")
+                                if getattr(self.feature_widget, 'debug_verbose', False):
+                                    print(f"[DEBUG] DataFrame is empty")
                                 QMessageBox.warning(self, "Warning", f"No valid data found in flight {selected_index}")
                                 continue
                             
                             # Find time column
                             time_col = next((col for col in df.columns if 'time' in col.lower()), None)
                             if time_col is None:
-                                print(f"[DEBUG] No time column found")
+                                if getattr(self.feature_widget, 'debug_verbose', False):
+                                    print(f"[DEBUG] No time column found")
                                 QMessageBox.critical(self, "Error", f"No time column found in flight {selected_index}")
                                 continue
                             
@@ -502,7 +525,8 @@ class FL1GHTViewer(QWidget):
                             # Normalize time data
                             df['time'] = (df['time'] - df['time'].iloc[0]) / 1_000_000.0
                             
-                            print(f"[DEBUG] Adding flight to loaded_logs as {display_filename}")
+                            if getattr(self.feature_widget, 'debug_verbose', False):
+                                print(f"[DEBUG] Adding flight to loaded_logs as {display_filename}")
                             
                             # Store the dataframe in the loaded_logs dictionary
                             self.feature_widget.loaded_logs[display_filename] = df
@@ -529,19 +553,22 @@ class FL1GHTViewer(QWidget):
                                 self.frequency_analyzer_widget.clear_all_plots()
                             
                             files_loaded += 1
-                            print(f"[DEBUG] Successfully loaded flight {display_filename}")
+                            if getattr(self.feature_widget, 'debug_verbose', False):
+                                print(f"[DEBUG] Successfully loaded flight {display_filename}")
                         finally:
                             # Clean up temporary file
                             try:
                                 os.unlink(temp_file_path)
                             except Exception as e:
-                                print(f"[DEBUG] Failed to clean up temp file: {e}")
+                                if getattr(self.feature_widget, 'debug_verbose', False):
+                                    print(f"[DEBUG] Failed to clean up temp file: {e}")
                 else:
                     # This is a single flight file or the decoder succeeded
                     if initial_result.returncode != 0:
                         # Decoder failed for a reason other than multiple flights
                         error_msg = initial_result.stderr.strip()
-                        print(f"[DEBUG] Decoder error: {error_msg}")
+                        if getattr(self.feature_widget, 'debug_verbose', False):
+                            print(f"[DEBUG] Decoder error: {error_msg}")
                         QMessageBox.critical(self, "Error", f"Failed to decode BBL file {filename}: {error_msg}")
                         continue
                     
@@ -549,11 +576,13 @@ class FL1GHTViewer(QWidget):
                     stdout_data = initial_result.stdout
                     
                     if not stdout_data.strip():
-                        print(f"[DEBUG] No output from decoder")
+                        if getattr(self.feature_widget, 'debug_verbose', False):
+                            print(f"[DEBUG] No output from decoder")
                         QMessageBox.warning(self, "Warning", f"No data was decoded from file {filename}")
                         continue
                     
-                    print(f"[DEBUG] Successfully decoded single flight")
+                    if getattr(self.feature_widget, 'debug_verbose', False):
+                        print(f"[DEBUG] Successfully decoded single flight")
                     
                     # Create a temporary file to store the CSV data
                     with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as temp_file:
@@ -586,21 +615,24 @@ class FL1GHTViewer(QWidget):
                         if d_min_vals['yaw']:
                             df['yawDMin'] = int(d_min_vals['yaw'])
                         
-                        print(f"[DEBUG] Added feed forward weights to DataFrame: roll={ff_weights['roll']}, pitch={ff_weights['pitch']}, yaw={ff_weights['yaw']}")
-                        print(f"[DEBUG] Added d_min to DataFrame: roll={d_min_vals['roll']}, pitch={d_min_vals['pitch']}, yaw={d_min_vals['yaw']}")
+                        if getattr(self.feature_widget, 'debug_verbose', False):
+                            print(f"[DEBUG] Added feed forward weights to DataFrame: roll={ff_weights['roll']}, pitch={ff_weights['pitch']}, yaw={ff_weights['yaw']}")
+                            print(f"[DEBUG] Added d_min to DataFrame: roll={d_min_vals['roll']}, pitch={d_min_vals['pitch']}, yaw={d_min_vals['yaw']}")
                         
                         # Strip leading/trailing spaces from all column names
                         df.columns = df.columns.str.strip()
                         
                         if df.empty:
-                            print(f"[DEBUG] DataFrame is empty")
+                            if getattr(self.feature_widget, 'debug_verbose', False):
+                                print(f"[DEBUG] DataFrame is empty")
                             QMessageBox.warning(self, "Warning", f"No valid data found in file {filename}")
                             continue
                         
                         # Find time column
                         time_col = next((col for col in df.columns if 'time' in col.lower()), None)
                         if time_col is None:
-                            print(f"[DEBUG] No time column found")
+                            if getattr(self.feature_widget, 'debug_verbose', False):
+                                print(f"[DEBUG] No time column found")
                             QMessageBox.critical(self, "Error", f"No time column found in file {filename}")
                             continue
                         
@@ -610,7 +642,8 @@ class FL1GHTViewer(QWidget):
                         # Normalize time data
                         df['time'] = (df['time'] - df['time'].iloc[0]) / 1_000_000.0
                         
-                        print(f"[DEBUG] Adding flight to loaded_logs as {filename}")
+                        if getattr(self.feature_widget, 'debug_verbose', False):
+                            print(f"[DEBUG] Adding flight to loaded_logs as {filename}")
                         
                         # Store the dataframe in the loaded_logs dictionary
                         self.feature_widget.loaded_logs[filename] = df
@@ -637,16 +670,19 @@ class FL1GHTViewer(QWidget):
                             self.frequency_analyzer_widget.clear_all_plots()
                         
                         files_loaded += 1
-                        print(f"[DEBUG] Successfully loaded flight {filename}")
+                        if getattr(self.feature_widget, 'debug_verbose', False):
+                            print(f"[DEBUG] Successfully loaded flight {filename}")
                     finally:
                         # Clean up temporary file
                         try:
                             os.unlink(temp_file_path)
                         except Exception as e:
-                            print(f"[DEBUG] Failed to clean up temp file: {e}")
+                            if getattr(self.feature_widget, 'debug_verbose', False):
+                                print(f"[DEBUG] Failed to clean up temp file: {e}")
                 
             except Exception as e:
-                print(f"[DEBUG] Error loading file: {e}")
+                if getattr(self.feature_widget, 'debug_verbose', False):
+                    print(f"[DEBUG] Error loading file: {e}")
                 QMessageBox.critical(self, "Error", f"Failed to load file: {str(e)}")
                 continue
         
@@ -689,7 +725,7 @@ class FL1GHTViewer(QWidget):
                 self.feature_widget.current_log = self.feature_widget.loaded_logs[log_name]
                 # Update parameters tab if it's active
                 if current_tab == 4:  # Parameters tab
-                    self.parameters_widget.update_parameters(log_name)
+                    self.parameters_widget.update_parameters([log_name])
         # Check if we have a current log
         if not hasattr(self.feature_widget, 'current_log') or self.feature_widget.current_log is None:
             QMessageBox.warning(self, "Warning", "Please select a log first.")
@@ -757,7 +793,8 @@ class FL1GHTViewer(QWidget):
         elif current_tab == 4:  # Parameters tab
             # Update parameters display
             if hasattr(self.feature_widget, 'selected_logs') and self.feature_widget.selected_logs:
-                self.parameters_widget.update_parameters(self.feature_widget.selected_logs[0])
+                self.parameters_widget.update_parameters(self.feature_widget.selected_logs[:2])
+            self.feature_widget.legend_group.setVisible(False)
 
     def update_spectral_analysis(self):
         """Update the spectral analysis when inputs change"""
@@ -913,6 +950,9 @@ class FL1GHTViewer(QWidget):
             # Let user click "Show Plot" button instead
         elif index == 4:  # Parameters
             self.feature_widget._set_checkboxes_enabled(False)
+            # Allow up to 2 logs to be selected in Parameters tab
+            self.feature_widget.logs_list.setSelectionMode(QListWidget.ExtendedSelection)
+            self.feature_widget.legend_group.setVisible(False)
 
     def plot_multiple_logs(self):
         """Plot multiple selected logs together"""

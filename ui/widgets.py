@@ -29,6 +29,7 @@ from utils.pid_analyzer_noise import plot_all_noise_from_df, plot_noise_from_df,
 import sys
 import json
 import tempfile
+import warnings
 
 class FeatureSelectionWidget(QWidget):
     def __init__(self, parent=None):
@@ -38,6 +39,7 @@ class FeatureSelectionWidget(QWidget):
         self.drone_name = ""
         self.export_dir = os.path.expanduser("~/Desktop")
         self.use_drone_in_filename = False
+        self.debug_level = "INFO"  # Can be 'INFO', 'DEBUG', 'VERBOSE'
         # Try to load from settings.json in config folder
         try:
             import json
@@ -51,6 +53,7 @@ class FeatureSelectionWidget(QWidget):
                     self.drone_name = settings.get('drone_name', self.drone_name)
                     self.export_dir = settings.get('export_dir', self.export_dir)
                     self.use_drone_in_filename = settings.get('use_drone_in_filename', self.use_drone_in_filename)
+                    self.debug_level = settings.get('debug_level', self.debug_level)
         except Exception as e:
             print(f"[FeatureSelectionWidget] Failed to load settings: {e}")
         self.loaded_logs = {}  # Dictionary to store loaded logs
@@ -508,19 +511,22 @@ class FeatureSelectionWidget(QWidget):
     def notify_parent_update(self, _):
         """Notify parent (FL1GHTViewer) to update the plot with currently selected features"""
         from PySide6.QtCore import QTimer
-        
+        if self.debug('DEBUG'):
+            print(f"[DEBUG] notify_parent_update: called, selected_logs={getattr(self, 'selected_logs', None)}")
         # If we already have a pending update, don't schedule another one
         if hasattr(self, 'update_timer') and self.update_timer is not None and self.update_timer.isActive():
+            if self.debug('DEBUG'):
+                print(f"[DEBUG] notify_parent_update: update_timer is active, skipping")
             return
-            
         # Create a timer for delayed update
         if not hasattr(self, 'update_timer') or self.update_timer is None:
             self.update_timer = QTimer()
             self.update_timer.setSingleShot(True)
             self.update_timer.timeout.connect(self._do_update)
-            
         # Start or restart the timer (300ms delay)
         self.update_timer.start(300)
+        if self.debug('DEBUG'):
+            print(f"[DEBUG] notify_parent_update: timer started")
     
     def _do_update(self):
         """Actually perform the update after the timer expires"""
@@ -528,10 +534,13 @@ class FeatureSelectionWidget(QWidget):
         # Find the main viewer (FL1GHTViewer) in the parent chain
         while parent is not None and not hasattr(parent, 'plot_selected'):
             parent = parent.parent() if hasattr(parent, 'parent') else None
-        
+        if self.debug('DEBUG'):
+            print(f"[DEBUG] _do_update: parent={parent}, tab={parent.tab_widget.currentIndex() if parent and hasattr(parent, 'tab_widget') else None}")
         # Check if we're in the Time Domain tab (index 0)
         if parent and hasattr(parent, 'tab_widget') and parent.tab_widget.currentIndex() == 0:
             # Call plot_selected to update the chart and legend
+            if self.debug('DEBUG'):
+                print(f"[DEBUG] _do_update: calling plot_selected() for Time Domain tab")
             parent.plot_selected()
 
     def uncheck_all_features(self):
@@ -580,21 +589,27 @@ class FeatureSelectionWidget(QWidget):
         if enabled:
             self.logs_list.setSelectionMode(QListWidget.ExtendedSelection)
             # Connect step response handler
-            try:
-                self.logs_list.itemSelectionChanged.disconnect(self._handle_spectral_log_selection)
-            except (TypeError, RuntimeError):
-                pass
-            try:
-                self.logs_list.itemSelectionChanged.disconnect(self._handle_step_response_log_selection)
-            except (TypeError, RuntimeError):
-                pass
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                try:
+                    self.logs_list.itemSelectionChanged.disconnect(self._handle_spectral_log_selection)
+                except (TypeError, RuntimeError):
+                    pass
+                try:
+                    self.logs_list.itemSelectionChanged.disconnect(self._handle_step_response_log_selection)
+                except (TypeError, RuntimeError):
+                    pass
             self.logs_list.itemSelectionChanged.connect(self._handle_step_response_log_selection)
         else:
             self.logs_list.setSelectionMode(QListWidget.SingleSelection)
-            try:
-                self.logs_list.itemSelectionChanged.disconnect(self._handle_step_response_log_selection)
-            except (TypeError, RuntimeError):
-                pass
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                try:
+                    self.logs_list.itemSelectionChanged.disconnect(self._handle_step_response_log_selection)
+                except (TypeError, RuntimeError):
+                    pass
 
     def set_spectral_mode(self, enabled):
         """Set the widget to spectral analysis mode"""
@@ -618,28 +633,32 @@ class FeatureSelectionWidget(QWidget):
             # Enable checkboxes for spectral analysis
             self._set_checkboxes_enabled(True)
             # Connect spectral analysis handler
-            try:
-                self.logs_list.itemSelectionChanged.disconnect(self._handle_step_response_log_selection)
-            except (TypeError, RuntimeError):
-                pass
-            try:
-                self.logs_list.itemSelectionChanged.disconnect(self._handle_spectral_log_selection)
-            except (TypeError, RuntimeError):
-                pass
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                try:
+                    self.logs_list.itemSelectionChanged.disconnect(self._handle_step_response_log_selection)
+                except (TypeError, RuntimeError):
+                    pass
+                try:
+                    self.logs_list.itemSelectionChanged.disconnect(self._handle_spectral_log_selection)
+                except (TypeError, RuntimeError):
+                    pass
             self.logs_list.itemSelectionChanged.connect(self._handle_spectral_log_selection)
         elif current_tab == 2:  # Step Response
             self.logs_list.setSelectionMode(QListWidget.ExtendedSelection)
             # Disable checkboxes for step response
             self._set_checkboxes_enabled(False)
             # Connect step response handler
-            try:
-                self.logs_list.itemSelectionChanged.disconnect(self._handle_spectral_log_selection)
-            except (TypeError, RuntimeError):
-                pass
-            try:
-                self.logs_list.itemSelectionChanged.disconnect(self._handle_step_response_log_selection)
-            except (TypeError, RuntimeError):
-                pass
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                try:
+                    self.logs_list.itemSelectionChanged.disconnect(self._handle_spectral_log_selection)
+                except (TypeError, RuntimeError):
+                    pass
+                try:
+                    self.logs_list.itemSelectionChanged.disconnect(self._handle_step_response_log_selection)
+                except (TypeError, RuntimeError):
+                    pass
             self.logs_list.itemSelectionChanged.connect(self._handle_step_response_log_selection)
         elif current_tab == 5:  # Export
             self.logs_list.setSelectionMode(QListWidget.SingleSelection)
@@ -672,7 +691,7 @@ class FeatureSelectionWidget(QWidget):
     def open_settings_dialog(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("Settings")
-        dialog.resize(420, 220)  # Make the dialog wider and taller
+        dialog.resize(420, 260)  # Make the dialog wider and taller
         layout = QVBoxLayout(dialog)
 
         # Author name
@@ -693,6 +712,15 @@ class FeatureSelectionWidget(QWidget):
         drone_checkbox = QCheckBox("Include drone name in export filename")
         drone_checkbox.setChecked(self.use_drone_in_filename)
         layout.addWidget(drone_checkbox)
+
+        # Debug level selection
+        debug_label = QLabel("Debug Level:")
+        debug_combo = QComboBox()
+        debug_combo.addItems(["INFO", "DEBUG", "VERBOSE"])
+        debug_combo.setCurrentText(self.debug_level)
+        debug_combo.setStyleSheet("QComboBox { border: 1.5px solid white; border-radius: 4px; }")
+        layout.addWidget(debug_label)
+        layout.addWidget(debug_combo)
 
         # Export directory
         dir_label = QLabel("Export Directory:")
@@ -723,6 +751,7 @@ class FeatureSelectionWidget(QWidget):
             self.export_dir = dir_edit.text()
             self.drone_name = drone_edit.text()
             self.use_drone_in_filename = drone_checkbox.isChecked()
+            self.debug_level = debug_combo.currentText()
             # Save to config/settings.json
             app_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
             config_dir = os.path.join(app_dir, "config")
@@ -735,7 +764,8 @@ class FeatureSelectionWidget(QWidget):
                         "author_name": self.author_name,
                         "export_dir": self.export_dir,
                         "drone_name": self.drone_name,
-                        "use_drone_in_filename": self.use_drone_in_filename
+                        "use_drone_in_filename": self.use_drone_in_filename,
+                        "debug_level": self.debug_level
                     }, f, indent=2)
             except Exception as e:
                 print(f"[Settings] Failed to save config: {e}")
@@ -757,19 +787,34 @@ class FeatureSelectionWidget(QWidget):
     def on_logs_selection_changed(self):
         """Handle log selection changes in the list widget"""
         selected_items = self.logs_list.selectedItems()
+        if self.debug('DEBUG'):
+            print(f"[DEBUG] on_logs_selection_changed: selected_items={[item.text() for item in selected_items]}")
         if not selected_items:
             return
 
         # Get the current tab
         current_tab = self.get_current_tab_index()
+        if self.debug('DEBUG'):
+            print(f"[DEBUG] on_logs_selection_changed: current_tab={current_tab}")
         
-        # Force single selection for Time Domain, Frequency Analyzer, and Parameters tabs
-        if current_tab in [0, 3, 4]:  # Time Domain, Frequency Analyzer, Parameters
+        # Force single selection for Time Domain, Frequency Analyzer
+        # Allow up to 2 for Parameters tab
+        if current_tab in [0, 3]:  # Time Domain, Frequency Analyzer
             if len(selected_items) > 1:
                 last_selected = selected_items[-1]
                 self.logs_list.clearSelection()
                 last_selected.setSelected(True)
                 selected_items = [last_selected]
+                if self.debug('DEBUG'):
+                    print(f"[DEBUG] on_logs_selection_changed: forced single selection, kept {last_selected.text()}")
+        elif current_tab == 4:  # Parameters
+            if len(selected_items) > 2:
+                # Unselect the last selected item
+                selected_items[-1].setSelected(False)
+                selected_items = selected_items[:-1]
+                QMessageBox.warning(self, "Warning", "You can only select up to 2 logs for parameter comparison.")
+                if self.debug('DEBUG'):
+                    print(f"[DEBUG] on_logs_selection_changed: forced two selection, kept {[item.text() for item in selected_items]}")
         else:
             # For all other tabs, check if Ctrl/Cmd key is pressed
             modifiers = QApplication.keyboardModifiers()
@@ -781,24 +826,40 @@ class FeatureSelectionWidget(QWidget):
                 self.logs_list.clearSelection()
                 last_selected.setSelected(True)
                 selected_items = [last_selected]
+                if self.debug('DEBUG'):
+                    print(f"[DEBUG] on_logs_selection_changed: forced single selection (no multi-select), kept {last_selected.text()}")
 
         # Update selected_logs list
         self.selected_logs = [item.text() for item in selected_items]
+        if self.debug('DEBUG'):
+            print(f"[DEBUG] on_logs_selection_changed: self.selected_logs={self.selected_logs}")
         
         # Update current log
         if self.selected_logs:
             self.current_log = self.loaded_logs[self.selected_logs[0]]
             self.df = self.current_log
+            if self.debug('DEBUG'):
+                print(f"[DEBUG] on_logs_selection_changed: current_log={self.selected_logs[0]}, df shape={self.df.shape if hasattr(self.df, 'shape') else None}")
             
             # Update combo box to match list selection
             if len(self.selected_logs) == 1:
                 index = self.logs_combo.findText(self.selected_logs[0])
                 if index >= 0:
                     self.logs_combo.setCurrentIndex(index)
-                
+                    if self.debug('DEBUG'):
+                        print(f"[DEBUG] on_logs_selection_changed: logs_combo set to {self.selected_logs[0]}")
+            
             # Only notify parent for non-Time Domain tabs
             if current_tab != 0:  # Don't auto-plot in Time Domain tab
-                self.notify_parent_update(None)
+                # For Parameters tab, pass up to 2 logs
+                if current_tab == 4:
+                    if self.debug('DEBUG'):
+                        print(f"[DEBUG] on_logs_selection_changed: notifying parent for Parameters tab with logs {self.selected_logs[:2]}")
+                    self.notify_parent_update(self.selected_logs[:2])
+                else:
+                    if self.debug('DEBUG'):
+                        print(f"[DEBUG] on_logs_selection_changed: notifying parent for tab {current_tab}")
+                    self.notify_parent_update(None)
 
     def on_log_selected(self, index):
         """Handle log selection changes in the combo box"""
@@ -846,6 +907,10 @@ class FeatureSelectionWidget(QWidget):
             # Unselect the last selected item
             selected_items[-1].setSelected(False)
             QMessageBox.warning(self, "Warning", "You can only select up to 2 flights for spectral analysis.")
+
+    def debug(self, level):
+        levels = {"INFO": 1, "DEBUG": 2, "VERBOSE": 3}
+        return levels.get(getattr(self, 'debug_level', 'INFO'), 1) >= levels.get(level, 1)
 
 class ControlWidget(QWidget):
     def __init__(self, parent=None):
@@ -1012,7 +1077,7 @@ class SpectralAnalyzerWidget(QWidget):
             self.df = df
         df = self.df
         if df is None or df.empty:
-            print("[SpectralAnalyzer] DataFrame is empty or None.")
+            print("[INFO][SpectralAnalyzer] DataFrame is empty or None.")
             return
         # Welch parameters from user controls
         window_size = self.window_sizes[self.window_size_slider.value()]
@@ -1037,9 +1102,10 @@ class SpectralAnalyzerWidget(QWidget):
         if hasattr(fw, 'rc_checkbox') and fw.rc_checkbox.isChecked():
             selected_types.append('rc')
         if not selected_types:
-            print("[SpectralAnalyzer] No types selected, nothing will be plotted.")
+            print("[INFO][SpectralAnalyzer] No types selected, nothing will be plotted.")
             return
-        print(f"[SpectralAnalyzer] Selected types: {selected_types}")
+        if self.feature_widget.debug('INFO'):
+            print(f"[INFO][SpectralAnalyzer] Selected types: {selected_types}")
 
         # Select color palette based on whether to use alternative colors
         color_palette = ALTERNATIVE_COLOR_PALETTE if use_alternative_colors else COLOR_PALETTE
@@ -1065,7 +1131,8 @@ class SpectralAnalyzerWidget(QWidget):
         time_data = time_data - time_data.min()
         dt = np.mean(np.diff(time_data))
         fs = 1.0 / dt if dt > 0 else 0.0
-        print(f"[SpectralAnalyzer] Sampling rate: {fs:.2f} Hz")
+        if self.feature_widget.debug('INFO'):
+            print(f"[INFO][SpectralAnalyzer] Sampling rate: {fs:.2f} Hz")
 
         from scipy import signal
 
@@ -1424,18 +1491,22 @@ class StepResponseWidget(QWidget):
             ff_col = f'{axis_name}FF'
             if ff_col in df.columns:
                 ff_val = df[ff_col].iloc[0]
-                print(f"[DEBUG] Feed forward value for {axis_name} from {ff_col}: {ff_val}")  # Debug print
+                if self.feature_widget.debug('DEBUG'):
+                    print(f"[DEBUG] Feed forward value for {axis_name} from {ff_col}: {ff_val}")
             else:
-                print(f"[DEBUG] Feed forward column {ff_col} not found in DataFrame")  # Debug print
+                if self.feature_widget.debug('DEBUG'):
+                    print(f"[DEBUG] Feed forward column {ff_col} not found in DataFrame")
                 ff_val = 0.0
 
             # Get d_min value from DMin column
             dmin_col = f'{axis_name}DMin'
             if dmin_col in df.columns:
                 dmin_val = df[dmin_col].iloc[0]
-                print(f"[DEBUG] d_min value for {axis_name} from {dmin_col}: {dmin_val}")  # Debug print
+                if self.feature_widget.debug('DEBUG'):
+                    print(f"[DEBUG] d_min value for {axis_name} from {dmin_col}: {dmin_val}")
             else:
-                print(f"[DEBUG] d_min column {dmin_col} not found in DataFrame")  # Debug print
+                if self.feature_widget.debug('DEBUG'):
+                    print(f"[DEBUG] d_min column {dmin_col} not found in DataFrame")
                 dmin_val = 0.0
 
             if gyro_col in df.columns and p_err_col in df.columns and throttle_col in df.columns:
@@ -1713,30 +1784,30 @@ class FrequencyAnalyzerWidget(QWidget):
         if df is not None:
             self.df = df
         if self.df is None or self.df.empty:
-            print("[FrequencyAnalyzer] DataFrame is empty or None.")
+            if self.feature_widget.debug('DEBUG'):
+                print("[FrequencyAnalyzer] DataFrame is empty or None.")
             return
         # Debug: print columns and sample data
-        print("[FrequencyAnalyzer] DataFrame columns:", self.df.columns.tolist())
-        print("[FrequencyAnalyzer] DataFrame head:")
-        print(self.df.head())
-        
+        if self.feature_widget.debug('DEBUG'):
+            print("[FrequencyAnalyzer] DataFrame columns:", self.df.columns.tolist())
+            print("[FrequencyAnalyzer] DataFrame head:")
+            print(self.df.head())
         # Check for key columns
         has_gyro = any('gyro' in col.lower() for col in self.df.columns)
         has_debug = any('debug' in col.lower() for col in self.df.columns)
         has_throttle = any('throttle' in col.lower() or 'rccommand[3]' in col.lower() for col in self.df.columns)
-        
-        print(f"[FrequencyAnalyzer] Has gyro: {has_gyro}, debug: {has_debug}, throttle: {has_throttle}")
-        print(f"[FrequencyAnalyzer] Using gain: {self.gain}x, max_freq: {max_freq}Hz")
-        
+        if self.feature_widget.debug('DEBUG'):
+            print(f"[FrequencyAnalyzer] Has gyro: {has_gyro}, debug: {has_debug}, throttle: {has_throttle}")
+            print(f"[FrequencyAnalyzer] Using gain: {self.gain}x, max_freq: {max_freq}Hz")
         # Try to print gyro, debug, and throttle columns
-        for col in self.df.columns:
-            if 'gyro' in col.lower() or 'debug' in col.lower() or 'throttle' in col.lower() or 'rccommand[3]' in col.lower():
-                values = self.df[col].head().to_list()
-                if all(v == 0 for v in values):
-                    print(f"[FrequencyAnalyzer] WARNING: {col} has all zeros in first rows")
-                else:
-                    print(f"[FrequencyAnalyzer] Sample data for {col}:", values)
-        
+        if self.feature_widget.debug('DEBUG'):
+            for col in self.df.columns:
+                if 'gyro' in col.lower() or 'debug' in col.lower() or 'throttle' in col.lower() or 'rccommand[3]' in col.lower():
+                    values = self.df[col].head().to_list()
+                    if all(v == 0 for v in values):
+                        print(f"[FrequencyAnalyzer] WARNING: {col} has all zeros in first rows")
+                    else:
+                        print(f"[FrequencyAnalyzer] Sample data for {col}:", values)
         self.clear_all_plots()
         try:
             figures = generate_individual_noise_figures(self.df, gain=self.gain, max_freq=max_freq)
@@ -1760,25 +1831,21 @@ class FrequencyAnalyzerWidget(QWidget):
                     def on_motion(event):
                         # Get figure dimensions
                         fig_height = fig.get_figheight() * fig.dpi
-                        
                         # If position is near the bottom of the figure (where colorbar is), hide tooltip
                         # Colorbar is in the bottom ~5% of the figure
                         if event.y < fig_height * 0.05:
                             QToolTip.hideText()
                             return
-                            
                         # Hide tooltip if over colorbar or if no data coordinates
                         if (event.inaxes is None or
                             event.xdata is None or event.ydata is None or
                             (hasattr(event.inaxes, 'get_label') and event.inaxes.get_label() == 'colorbar')):
                             QToolTip.hideText()
                             return
-                        
                         x, y = event.xdata, event.ydata
                         tooltip = f"Throttle: {x:.1f}%\nFrequency: {y:.1f} Hz"
                         QToolTip.showText(canvas.mapToGlobal(event.guiEvent.pos()), tooltip, canvas)
                     return on_motion
-
                 # Add statistics annotation to the plot
                 for ax in fig.axes:
                     # Skip if this is a colorbar axis
@@ -1791,10 +1858,8 @@ class FrequencyAnalyzerWidget(QWidget):
                                 # Get frequency values from the plot
                                 y_lims = ax.get_ylim()
                                 y_data = np.linspace(y_lims[0], y_lims[1], arr.shape[0])
-                                
                                 # Create mask for frequencies above 15Hz
                                 freq_mask = y_data >= 15
-                                
                                 # Calculate statistics only for frequencies above 15Hz
                                 # Remove any padding/background values (1e-6)
                                 noise_values = arr[freq_mask][arr[freq_mask] > 1e-6]
@@ -1810,7 +1875,8 @@ class FrequencyAnalyzerWidget(QWidget):
                                            color='white',
                                            fontsize=9)
                 canvas.mpl_connect('motion_notify_event', make_motion_event_handler(canvas, fig))
-            print(f"[FrequencyAnalyzer] Individual plots generated successfully in 3x3 grid (max freq: {max_freq}Hz)")
+            if self.feature_widget.debug('DEBUG'):
+                print(f"[FrequencyAnalyzer] Individual plots generated successfully in 3x3 grid (max freq: {max_freq}Hz)")
         except Exception as e:
             import traceback
             print(f"[FrequencyAnalyzer] Error plotting: {e}")
@@ -2374,12 +2440,40 @@ class ParametersWidget(QWidget):
     def __init__(self, feature_widget, parent=None):
         super().__init__(parent)
         self.feature_widget = feature_widget
+        self.highlight_differences = False
+        self.show_only_differences = False
+        self.value_labels = []  # Store references to value QLabel widgets for highlighting
+        self.difference_rows = set()  # Store row indices that are different
         self.setup_ui()
-        
+    
     def setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
         layout.setContentsMargins(10, 10, 10, 10)
+        
+        # Create a horizontal layout for the two buttons
+        button_row = QHBoxLayout()
+        button_row.setSpacing(10)
+        
+        # Add highlight differences button (hidden by default)
+        self.highlight_button = QPushButton("Highlight Differences")
+        self.highlight_button.setCheckable(True)
+        self.highlight_button.setVisible(False)
+        self.highlight_button.clicked.connect(self.toggle_highlight_differences)
+        self.highlight_button.setFont(QFont("fccTYPO"))
+        self.set_highlight_button_style(False)
+        button_row.addWidget(self.highlight_button)
+
+        # Add show only differences button (hidden by default)
+        self.show_diff_button = QPushButton("Show Only Differences")
+        self.show_diff_button.setCheckable(True)
+        self.show_diff_button.setVisible(False)
+        self.show_diff_button.clicked.connect(self.toggle_show_only_differences)
+        self.show_diff_button.setFont(QFont("fccTYPO"))
+        self.set_show_diff_button_style(False)
+        button_row.addWidget(self.show_diff_button)
+
+        layout.addLayout(button_row)
         
         # Create scroll area for parameters
         scroll_area = QScrollArea()
@@ -2418,6 +2512,168 @@ class ParametersWidget(QWidget):
         scroll_area.setWidget(self.parameters_widget)
         layout.addWidget(scroll_area)
         
+    def set_highlight_button_style(self, active):
+        if active:
+            self.highlight_button.setStyleSheet("background-color: #00ff66; color: black; font-weight: bold;")
+        else:
+            self.highlight_button.setStyleSheet("")
+
+    def set_show_diff_button_style(self, active):
+        if active:
+            self.show_diff_button.setStyleSheet("background-color: #3399ff; color: white; font-weight: bold;")
+        else:
+            self.show_diff_button.setStyleSheet("")
+
+    def toggle_highlight_differences(self):
+        self.highlight_differences = not self.highlight_differences
+        self.highlight_button.setChecked(self.highlight_differences)
+        self.set_highlight_button_style(self.highlight_differences)
+        self.apply_highlighting()
+
+    def toggle_show_only_differences(self):
+        self.show_only_differences = not self.show_only_differences
+        self.show_diff_button.setChecked(self.show_only_differences)
+        self.set_show_diff_button_style(self.show_only_differences)
+        # Re-render the parameters with the current filter
+        self.update_parameters(self.current_log_names)
+
+    def apply_highlighting(self):
+        # Only highlight if there are two logs and value_labels is populated
+        if not self.value_labels or len(self.value_labels) != 2:
+            return
+        for row in range(len(self.value_labels[0])):
+            label1 = self.value_labels[0][row]
+            label2 = self.value_labels[1][row]
+            val1 = label1.text()
+            val2 = label2.text()
+            if self.highlight_differences and val1 != val2:
+                label1.setStyleSheet("color: #222; background: #fff9b1;")
+                label2.setStyleSheet("color: #222; background: #fff9b1;")
+            else:
+                label1.setStyleSheet("color: #00bfff;")
+                label2.setStyleSheet("color: #00bfff;")
+
+    def update_parameters(self, log_names=None):
+        self.clear_parameters()
+        self.value_labels = []
+        self.difference_rows = set()
+        self.current_log_names = log_names
+        if not log_names or not hasattr(self.feature_widget, 'loaded_log_paths'):
+            self.highlight_button.setVisible(False)
+            self.show_diff_button.setVisible(False)
+            return
+        if isinstance(log_names, str):
+            log_names = [log_names]
+        log_names = log_names[:2]  # Only allow up to 2 logs
+        bbl_paths = [self.feature_widget.loaded_log_paths.get(name) for name in log_names]
+        sections_list = [self.parse_bbl_header(path) if path else {} for path in bbl_paths]
+
+        # Collect all unique parameter keys in order
+        all_keys = []
+        key_to_section = {}
+        section_order = [
+            'Firmware', 'Craft', 'PID', 'RC', 'TPA', 'D', 'I', 'Anti', 'Feed', 'Acc', 'Other', 'Hardware'
+        ]
+        for idx, sections in enumerate(sections_list):
+            for section in section_order:
+                if section in sections:
+                    for key, _ in sections[section]:
+                        if key not in all_keys:
+                            all_keys.append(key)
+                            key_to_section[key] = section
+            for section, items in sections.items():
+                if section == 'Field':
+                    continue
+                for key, _ in items:
+                    if key not in all_keys:
+                        all_keys.append(key)
+                        key_to_section[key] = section
+
+        # Create a grid layout: col 0 = key, col 1 = log1, col 2 = log2
+        grid_layout = QGridLayout()
+        grid_layout.setSpacing(5)
+        grid_layout.setHorizontalSpacing(10)
+        grid_layout.setContentsMargins(10, 10, 10, 10)
+
+        # Header row
+        grid_layout.addWidget(QLabel("Parameter"), 0, 0)
+        grid_layout.addWidget(QLabel(log_names[0] if len(log_names) > 0 else ""), 0, 1)
+        grid_layout.addWidget(QLabel(log_names[1] if len(log_names) > 1 else ""), 0, 2)
+
+        row = 1
+        value_labels_1 = []
+        value_labels_2 = []
+        for key in all_keys:
+            label = QLabel(key)
+            label.setStyleSheet("color: white;")
+            # Get values for both logs
+            values = []
+            for col, sections in enumerate(sections_list):
+                value = ""
+                section = key_to_section.get(key, None)
+                if section and section in sections:
+                    for k, v in sections[section]:
+                        if k == key:
+                            value = v
+                            break
+                values.append(value if value.strip() else "")
+            # If show_only_differences is enabled, skip rows that are the same
+            if self.show_only_differences and len(values) == 2 and values[0] == values[1]:
+                continue
+            # Track difference rows for highlighting
+            if len(values) == 2 and values[0] != values[1]:
+                self.difference_rows.add(row-1)  # row-1 because header is row 0
+            grid_layout.addWidget(label, row, 0)
+            for col, value in enumerate(values):
+                value_label = QLabel(value)
+                value_label.setStyleSheet("color: #00bfff;")
+                grid_layout.addWidget(value_label, row, col + 1)
+                if col == 0:
+                    value_labels_1.append(value_label)
+                elif col == 1:
+                    value_labels_2.append(value_label)
+            row += 1
+
+        # Store references for highlighting
+        if len(log_names) == 2:
+            self.value_labels = [value_labels_1, value_labels_2]
+            self.highlight_button.setVisible(True)
+            self.show_diff_button.setVisible(True)
+            self.set_highlight_button_style(self.highlight_differences)
+            self.set_show_diff_button_style(self.show_only_differences)
+            self.apply_highlighting()
+        else:
+            self.value_labels = []
+            self.highlight_button.setVisible(False)
+            self.show_diff_button.setVisible(False)
+
+        self.parameters_layout.addLayout(grid_layout)
+        self.parameters_layout.addStretch(1)
+
+    def clear_parameters(self):
+        """Clear all parameters from the display, including layouts"""
+        while self.parameters_layout.count():
+            item = self.parameters_layout.takeAt(0)
+            widget = item.widget()
+            layout = item.layout()
+            if widget is not None:
+                widget.deleteLater()
+            elif layout is not None:
+                self._delete_layout(layout)
+
+    def _delete_layout(self, layout):
+        """Recursively delete all items in a layout"""
+        if layout is not None:
+            while layout.count():
+                item = layout.takeAt(0)
+                widget = item.widget()
+                child_layout = item.layout()
+                if widget is not None:
+                    widget.deleteLater()
+                elif child_layout is not None:
+                    self._delete_layout(child_layout)
+            layout.deleteLater()
+
     def parse_bbl_header(self, bbl_path):
         """Parse the header of a .bbl file and return a dict of sections to key-value pairs."""
         if not bbl_path or not os.path.exists(bbl_path):
@@ -2453,76 +2709,7 @@ class ParametersWidget(QWidget):
             print(f"[ParametersWidget] Failed to parse .bbl header: {e}")
             return {}
 
-    def update_parameters(self, log_name=None):
-        """Update the parameters display with the current log's .bbl header data dynamically."""
-        self.clear_parameters()
-        if not log_name or not hasattr(self.feature_widget, 'loaded_log_paths'):
-            return
-        bbl_path = self.feature_widget.loaded_log_paths.get(log_name)
-        if not bbl_path:
-            return
-        sections = self.parse_bbl_header(bbl_path)
-
-        # Create a single grid layout for all parameters
-        grid_layout = QGridLayout()
-        grid_layout.setSpacing(5)
-        grid_layout.setHorizontalSpacing(10)
-        grid_layout.setContentsMargins(10, 10, 10, 10)
-
-        section_order = [
-            'Firmware', 'Craft', 'PID', 'RC', 'TPA', 'D', 'I', 'Anti', 'Feed', 'Acc', 'Other', 'Hardware'
-        ]
-
-        row = 0
-        for section in section_order:
-            if section in sections:
-                for key, value in sections[section]:
-                    print(f"ROW {row}: {key} = {value}")  # DEBUG")
-                    label = QLabel(key)
-                    value_label = QLabel(value if value.strip() else "")
-                    label.setStyleSheet("color: white;")
-                    value_label.setStyleSheet("color: #00bfff;")
-                    grid_layout.addWidget(label, row, 0)
-                    grid_layout.addWidget(value_label, row, 1)
-                    row += 1
-                del sections[section]
-
-        for section, items in sections.items():
-            if section == 'Field':
-                continue
-            for key, value in items:
-                print(f"ROW {row}: {key} = {value}")  # DEBUG")
-                label = QLabel(key)
-                value_label = QLabel(value if value.strip() else "")
-                label.setStyleSheet("color: white;")
-                value_label.setStyleSheet("color: #00bfff;")
-                grid_layout.addWidget(label, row, 0)
-                grid_layout.addWidget(value_label, row, 1)
-                row += 1
-
-        self.parameters_layout.addLayout(grid_layout)
-        self.parameters_layout.addStretch(1)
-
-    def clear_parameters(self):
-        """Clear all parameters from the display, including layouts"""
-        while self.parameters_layout.count():
-            item = self.parameters_layout.takeAt(0)
-            widget = item.widget()
-            layout = item.layout()
-            if widget is not None:
-                widget.deleteLater()
-            elif layout is not None:
-                self._delete_layout(layout)
-
-    def _delete_layout(self, layout):
-        """Recursively delete all items in a layout"""
-        if layout is not None:
-            while layout.count():
-                item = layout.takeAt(0)
-                widget = item.widget()
-                child_layout = item.layout()
-                if widget is not None:
-                    widget.deleteLater()
-                elif child_layout is not None:
-                    self._delete_layout(child_layout)
-            layout.deleteLater()
+    # Add a helper for debug level checks
+    def debug(self, level):
+        levels = {"INFO": 1, "DEBUG": 2, "VERBOSE": 3}
+        return levels.get(getattr(self, 'debug_level', 'INFO'), 1) >= levels.get(level, 1)

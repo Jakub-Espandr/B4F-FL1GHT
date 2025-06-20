@@ -5,10 +5,29 @@ See LICENSE file or contact the authors for full terms.
 
 import os
 import sys
+import logging
+import json
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QIcon
 from core.fl1ght_viewer import FL1GHTViewer
 from utils.config import ASSETS_DIR, ICONS_DIR, load_custom_fonts
+
+# Load debug_level from config/settings.json
+app_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+config_dir = os.path.join(app_dir, "config")
+settings_path = os.path.join(config_dir, "settings.json")
+debug_level = "INFO"
+if os.path.exists(settings_path):
+    try:
+        with open(settings_path, 'r') as f:
+            settings = json.load(f)
+            debug_level = settings.get('debug_level', 'INFO')
+    except Exception as e:
+        print(f"[main.py] Failed to load debug_level from settings: {e}")
+if debug_level.upper() in ["DEBUG", "VERBOSE"]:
+    logging.basicConfig(level=logging.DEBUG)
+else:
+    logging.basicConfig(level=logging.INFO)
 
 def get_application_icon():
     """Get the application icon in a cross-platform way"""

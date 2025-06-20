@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.1] - 2025-06-20
+
+### Added
+- Parameters tab: Side-by-side comparison of up to two logs, with three-column layout (parameter name, log1, log2).
+- Highlight Differences: Toggle button to highlight differing parameter values in the Parameters tab.
+- Show Only Differences: Toggle button to filter and show only rows with differences in the Parameters tab.
+- Settings dialog: Debug verbosity control (INFO, DEBUG, VERBOSE) with dropdown selector and persistent storage in settings.json.
+
+### Improved
+- All debug/info print statements in Frequency Analyzer and Spectral Analyzer are now wrapped with debug level checks and labeled ([INFO], [DEBUG], etc.).
+- Suppressed noisy RuntimeWarnings from failed signal disconnects in the UI.
+- General UI/UX improvements for Parameters tab, legend visibility, and button styling.
+- Logging configuration is now set dynamically at app startup based on settings.json, ensuring consistent debug output control.
+
+---
+
 ## [0.5.0] - 2025-06-09
 
 ### Added

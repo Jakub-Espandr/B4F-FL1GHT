@@ -2,5 +2,6 @@
   "author_name": "Born4Flight",
   "export_dir": "",
   "drone_name": "FL1GHT",
-  "use_drone_in_filename": false
+  "use_drone_in_filename": false,
+  "debug_level": "INFO"
 }

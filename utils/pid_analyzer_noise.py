@@ -12,9 +12,7 @@ import pandas as pd
 import logging
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import matplotlib.gridspec as gridspec
-
-# Enable debug logging
-logging.basicConfig(level=logging.INFO)
+import os, sys, json
 
 def spectrum(time, traces):
     """Calculate spectrum (frequency domain) from time domain data"""
@@ -36,8 +34,22 @@ def process_gyro_data(time, gyro, throttle, name="", gain=1.0):
     shift = int(winlen / noise_superpos)
     wins = int(tlen / shift) - noise_superpos
     
-    logging.info(f"Processing {name}: time len={tlen}, dt={dt}, winlen={winlen}, wins={wins}, gain={gain}")
-    logging.info(f"Data stats: gyro min/max={np.min(gyro)}/{np.max(gyro)}, throttle min/max={np.min(throttle)}/{np.max(throttle)}")
+    logging.info(f"Processing {name}: time len={tlen}, dt={dt:.6f}, winlen={winlen}, wins={wins}, gain={gain}")
+    # Print detailed stats only at VERBOSE (INFO level if VERBOSE, else DEBUG)
+    try:
+        app_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+        config_dir = os.path.join(app_dir, "config")
+        settings_path = os.path.join(config_dir, "settings.json")
+        if os.path.exists(settings_path):
+            with open(settings_path, 'r') as f:
+                settings = json.load(f)
+                debug_level = settings.get('debug_level', 'INFO')
+    except Exception:
+        pass
+    if debug_level == "VERBOSE":
+        logging.info(f"Data stats: gyro min/max={np.min(gyro)}/{np.max(gyro)}, throttle min/max={np.min(throttle)}/{np.max(throttle)}")
+    else:
+        logging.debug(f"Data stats: gyro min/max={np.min(gyro)}/{np.max(gyro)}, throttle min/max={np.min(throttle)}/{np.max(throttle)}")
     
     # Stack windows
     if wins <= 0:
