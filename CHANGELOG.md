@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.1] - 2025-06-21
+
+### Added
+- **Step Response Sample Statistics**: Enhanced step response plots with detailed sample processing information:
+  - Shows number of useful windows used for analysis (filtered by signal quality)
+  - Displays total samples processed for each axis
+  - Automatic detection of insufficient data (< 100 useful windows) with warning message
+  - Per-axis statistics showing different useful window counts (e.g., 270 roll, 260 pitch, insufficient yaw)
+  - Window filtering based on signal amplitude (100++ for optimal analysis)
+
+---
+
 ## [0.6.0] - 2025-06-21
 
 ### Added

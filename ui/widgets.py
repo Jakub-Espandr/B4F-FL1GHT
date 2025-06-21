@@ -1446,6 +1446,67 @@ class StepResponseWidget(QWidget):
             font.setBold(True)
         return font
 
+    def get_detailed_window_stats(self, trace):
+        """Get detailed window statistics for debugging and analysis."""
+        max_inputs = trace.max_in
+        low_mask_sum = int(np.sum(trace.low_mask))
+        toolow_mask_sum = int(np.sum(trace.toolow_mask))
+        useful_windows = int(np.sum(trace.low_mask * trace.toolow_mask))
+        
+        return {
+            'total_windows': len(max_inputs),
+            'useful_windows': useful_windows,
+            'low_amplitude_windows': len(max_inputs) - toolow_mask_sum,  # max input <= 20
+            'high_amplitude_windows': len(max_inputs) - low_mask_sum,    # max input > 500
+            'optimal_windows': useful_windows,                           # 20 < max input <= 500
+            'min_max_input': float(np.min(max_inputs)),
+            'max_max_input': float(np.max(max_inputs)),
+            'mean_max_input': float(np.mean(max_inputs)),
+            'sufficient_for_analysis': useful_windows >= 10
+        }
+
+    def calculate_sample_stats(self, trace):
+        """Calculate sample statistics for the step response analysis."""
+        # Calculate sampling frequency
+        dt = abs(trace.dt)  # Time step between samples
+        sampling_freq = 1.0 / dt if dt > 0 else 1000.0  # Default to 1kHz if dt is invalid
+        
+        # Calculate samples per window
+        flen_samples = trace.flen  # Frame length in samples
+        rlen_samples = trace.rlen  # Response length in samples
+        
+        # Calculate total windows created
+        total_time_samples = len(trace.data['time'])
+        shift_samples = int(flen_samples / trace.superpos)
+        total_windows_created = int(total_time_samples / shift_samples) - trace.superpos if shift_samples > 0 else 0
+        
+        # Calculate useful windows (those that contribute to the step response)
+        # The system uses: low_mask * toolow_mask
+        # low_mask: windows with max input <= threshold (500)
+        # toolow_mask: windows with max input > 20 (not too low)
+        useful_windows = int(np.sum(trace.low_mask * trace.toolow_mask))
+        
+        # Determine if there are sufficient windows
+        sufficient_windows = useful_windows >= 100  # Minimum threshold for reliable analysis (changed from 10 to 100)
+        
+        # Calculate total samples processed (only useful windows)
+        total_samples_processed = useful_windows * flen_samples if useful_windows > 0 else 0
+        
+        # Calculate final plot resolution
+        final_plot_points = rlen_samples * 1000  # 1000 vertical bins from weighted_mode_avr
+        
+        return {
+            'sampling_freq': sampling_freq,
+            'flen_samples': flen_samples,
+            'rlen_samples': rlen_samples,
+            'total_windows_created': total_windows_created,
+            'useful_windows': useful_windows,
+            'sufficient_windows': sufficient_windows,
+            'total_samples_processed': total_samples_processed,
+            'final_plot_points': final_plot_points,
+            'shift_samples': shift_samples
+        }
+
     def setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
@@ -1471,9 +1532,23 @@ class StepResponseWidget(QWidget):
             chart_view.setMouseTracking(True)
             chart_view.mouseMoveEvent = lambda event, cv=chart_view: self.show_tooltip(event, cv)
             chart_view.setCursor(Qt.CrossCursor)  # Add crosshair cursor
+            # Connect resize event for responsive annotations
+            chart_view.resizeEvent = lambda event, cv=chart_view: self.on_chart_resize(event, cv)
             self.chart_views.append(chart_view)
             charts_layout.addWidget(chart_view)
         layout.addWidget(self.charts_container)
+
+    def on_chart_resize(self, event, chart_view):
+        """Handle chart resize events to reposition annotations."""
+        # Call the original resize event
+        QChartView.resizeEvent(chart_view, event)
+        
+        # Reposition all annotations for this chart
+        if hasattr(chart_view, '_annotation_labels'):
+            for i, proxy in enumerate(chart_view._annotation_labels):
+                if proxy is not None:
+                    y_offset = 20 + (15 * i)
+                    proxy.setPos(chart_view.width() - 400, y_offset)
 
     def update_step_response(self, df, line_width=None, log_name=None, clear_charts=True, log_index=0):
         if df is None or df.empty:
@@ -1609,6 +1684,9 @@ class StepResponseWidget(QWidget):
                 t = trace.time_resp
                 mean, std, _ = trace.resp_low
 
+                # Calculate sample statistics
+                sample_stats = self.calculate_sample_stats(trace)
+
                 # Reference line at y=1.0 (add first, so it's behind the data)
                 if clear_charts and len(t) > 1:
                     ref_line = QLineSeries()
@@ -1673,17 +1751,25 @@ class StepResponseWidget(QWidget):
                 max_idx = int(np.argmax(mean))
                 max_t = float(t_ms[max_idx]) if max_idx < len(t_ms) else 0.0
                 t_05 = next((float(ti) for ti, yi in zip(t_ms, mean) if yi >= 0.5), None)
-                # Prepare annotation text in ms with matching color
-                annotation = f"Max: {max_y:.2f} at t={max_t:.0f}ms  Response: {t_05:.0f}ms" if t_05 is not None else f"Max: {max_y:.2f} at t={max_t:.0f}ms  Response: N/A"
-                label = QLabel(annotation)
-                label.setStyleSheet(f"color: {color.name()}; font-size: 9px; padding: 1px; background: transparent;")
+                
+                # Prepare annotation text with sample statistics
+                if sample_stats['sufficient_windows']:
+                    sample_info = f"<b>Useful windows:</b> {sample_stats['useful_windows']} | <b>Samples:</b> {sample_stats['total_samples_processed']}"
+                else:
+                    sample_info = f"<b>Insufficient for reliable analysis</b>"
+                
+                annotation = f"<b>Max:</b> {max_y:.2f} at t={max_t:.0f}ms | <b>Response:</b> {t_05:.0f}ms" if t_05 is not None else f"<b>Max:</b> {max_y:.2f} at t={max_t:.0f}ms | <b>Response:</b> N/A"
+                full_annotation = f"{annotation} | {sample_info}"
+                
+                label = QLabel(full_annotation)
+                label.setStyleSheet(f"color: {color.name()}; font-size: 9px; font-family: fccTYPO; padding: 1px; background: transparent;")
                 label.setAttribute(Qt.WA_TranslucentBackground)
                 label.setAlignment(Qt.AlignRight | Qt.AlignTop)
                 proxy = chart_view.scene().addWidget(label)
                 proxy.setZValue(100)
                 # Position annotations vertically for each log with smaller spacing
-                y_offset = 20 + (20 * log_index)  # 20px spacing between annotations, starting at 20px from top
-                proxy.setPos(chart_view.width() - 250, y_offset)  # Moved 50px more to the right
+                y_offset = 20 + (15 * log_index)  # Reduced spacing
+                proxy.setPos(chart_view.width() - 400, y_offset)  # Moved more to the left
                 if not hasattr(chart_view, '_annotation_labels'):
                     chart_view._annotation_labels = []
                 chart_view._annotation_labels.append(proxy)

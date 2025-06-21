@@ -8,7 +8,7 @@ from scipy.interpolate import interp1d
 from scipy.ndimage import gaussian_filter1d
 
 class StepTrace:
-    framelen = 0.7
+    framelen = 1.0
     resplen = 0.5
     cutfreq = 25.0
     tuk_alpha = 1.0
@@ -29,11 +29,19 @@ class StepTrace:
         self.flen = self.stepcalc(self.time, StepTrace.framelen)
         self.rlen = self.stepcalc(self.time, StepTrace.resplen)
         self.time_resp = self.time[0:self.rlen] - self.time[0]
-        self.stacks = self.winstacker({'time':[], 'input':[], 'gyro':[], 'throttle':[]}, self.flen, StepTrace.superpos)
+        self.superpos = StepTrace.superpos
+        # Debug windowing parameters
+        tlen = len(self.data['time'])
+        shift = int(self.flen / self.superpos)
+        wins = int(tlen / shift) - self.superpos if shift > 0 else 0
+        print(f"[StepTrace DEBUG] tlen={tlen}, flen={self.flen}, superpos={self.superpos}, shift={shift}, wins={wins}")
+        self.stacks = self.winstacker({'time':[], 'input':[], 'gyro':[], 'throttle':[]}, self.flen, self.superpos)
         self.window = np.hanning(self.flen)
         self.spec_sm, _, _, self.max_in, _ = self.stack_response(self.stacks, self.window)
         self.low_mask, self.high_mask = self.low_high_mask(self.max_in, self.threshold)
         self.toolow_mask = self.low_high_mask(self.max_in, 20)[1]
+        print(f"[StepTrace DEBUG] low_mask len={len(self.low_mask)}, toolow_mask len={len(self.toolow_mask)}, max_in len={len(self.max_in)}")
+        print(f"[StepTrace DEBUG] low_mask sum={np.sum(self.low_mask)}, toolow_mask sum={np.sum(self.toolow_mask)}, useful_windows={np.sum(self.low_mask * self.toolow_mask)}")
         self.resp_sm = self.weighted_mode_avr(self.spec_sm, self.toolow_mask, [-1.5,3.5], 1000)
         self.resp_quality = -self.to_mask((np.abs(self.spec_sm - self.resp_sm[0]).mean(axis=1)).clip(0.5-1e-9,0.5)) + 1.
         self.resp_low = self.weighted_mode_avr(self.spec_sm, self.low_mask * self.toolow_mask, [-1.5,3.5], 1000)
