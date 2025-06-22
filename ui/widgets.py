@@ -7,10 +7,13 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFileDialog,
     QCheckBox, QLabel, QMessageBox, QGroupBox, QScrollArea,
     QSlider, QProgressBar, QSizePolicy, QComboBox, QToolTip, QGridLayout, QSpinBox,
-    QDialog, QLineEdit, QListWidget, QApplication, QDoubleSpinBox
+    QDialog, QLineEdit, QListWidget, QApplication, QDoubleSpinBox,
+    QDialogButtonBox, QLineEdit, QTextEdit, QScrollArea, QFrame, QSizePolicy,
+    QToolTip, QSplitter, QFormLayout, QSpinBox, QDoubleSpinBox, QComboBox,
+    QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView
 )
-from PySide6.QtGui import QFont, QColor, QPainter, QPen, QIcon, QImage, QPixmap
-from PySide6.QtCore import Qt, QMargins, QTimer, QSize, QRect, QPoint
+from PySide6.QtGui import QFont, QColor, QPainter, QPen, QIcon, QImage, QPixmap, QPalette
+from PySide6.QtCore import Qt, QMargins, QTimer, QSize, QRect, QPoint, Signal
 from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis, QAreaSeries, QCategoryAxis, QLegend
 from utils.config import FONT_CONFIG, COLOR_PALETTE, MOTOR_COLORS, ALTERNATIVE_COLOR_PALETTE
 from utils.data_processor import get_clean_name
@@ -30,6 +33,18 @@ import json
 import tempfile
 import warnings
 from utils.spectrogram_utils import calculate_spectrogram
+
+class ClickableChartView(QChartView):
+    """A QChartView that emits a signal when clicked."""
+    clicked = Signal()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def mousePressEvent(self, event):
+        """Emit the clicked signal on a mouse press event."""
+        self.clicked.emit()
+        super().mousePressEvent(event)
 
 class FeatureSelectionWidget(QWidget):
     def __init__(self, parent=None):
@@ -1055,6 +1070,8 @@ class SpectralAnalyzerWidget(QWidget):
         super().__init__(parent)
         self.df = None
         self.feature_widget = feature_widget
+        self.expanded_chart = None
+        self.original_heights = {}  # Store original heights for restoration
         self.setup_ui()
         self.log_count = 0  # Track number of logs plotted
 
@@ -1095,7 +1112,7 @@ class SpectralAnalyzerWidget(QWidget):
         for axis in ['Roll', 'Pitch', 'Yaw']:
             row_layout = QHBoxLayout()
             # Full range plot
-            chart_view_full = QChartView()
+            chart_view_full = ClickableChartView()
             chart_view_full.setRenderHint(QPainter.Antialiasing)
             chart_view_full.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             chart_view_full.setMinimumHeight(200)
@@ -1110,9 +1127,10 @@ class SpectralAnalyzerWidget(QWidget):
             chart_view_full.setMouseTracking(True)
             chart_view_full.mouseMoveEvent = lambda event, cv=chart_view_full: self.show_tooltip(event, cv)
             chart_view_full.setCursor(Qt.CrossCursor)  # Add crosshair cursor
+            chart_view_full.clicked.connect(lambda cv=chart_view_full: self.on_chart_clicked(cv))
             row_layout.addWidget(chart_view_full, stretch=3)  # Make full plot wider
             # Zoomed plot (0-100 Hz)
-            chart_view_zoom = QChartView()
+            chart_view_zoom = ClickableChartView()
             chart_view_zoom.setRenderHint(QPainter.Antialiasing)
             chart_view_zoom.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             chart_view_zoom.setMinimumHeight(200)
@@ -1126,11 +1144,57 @@ class SpectralAnalyzerWidget(QWidget):
             chart_view_zoom.setMouseTracking(True)
             chart_view_zoom.mouseMoveEvent = lambda event, cv=chart_view_zoom: self.show_tooltip(event, cv)
             chart_view_zoom.setCursor(Qt.CrossCursor)  # Add crosshair cursor
+            chart_view_zoom.clicked.connect(lambda cv=chart_view_zoom: self.on_chart_clicked(cv))
             row_layout.addWidget(chart_view_zoom, stretch=1)  # Make zoomed plot narrower
             # Store both views as a tuple
             self.chart_views.append((chart_view_full, chart_view_zoom))
             charts_layout.addLayout(row_layout)
         layout.addWidget(self.charts_container)
+
+    def on_chart_clicked(self, clicked_chart_view):
+        """Handle chart click to expand or restore."""
+        # If the clicked chart is already expanded, restore all
+        if self.expanded_chart is clicked_chart_view:
+            self.restore_all_charts()
+        else:
+            # If another chart is expanded, or no chart is expanded
+            self.expand_chart(clicked_chart_view)
+
+    def expand_chart(self, chart_view):
+        """Expand a single chart and hide others."""
+        # Store original heights if not already stored
+        if not self.original_heights:
+            for full_view, zoom_view in self.chart_views:
+                self.original_heights[full_view] = full_view.height()
+                self.original_heights[zoom_view] = zoom_view.height()
+        
+        # Hide all charts except the clicked one
+        for full_view, zoom_view in self.chart_views:
+            full_view.hide()
+            zoom_view.hide()
+        
+        # Show only the clicked chart
+        chart_view.show()
+        
+        # Remove maximum width constraint for the expanded chart
+        chart_view.setMaximumWidth(16777215)  # Qt's default maximum width
+        
+        self.expanded_chart = chart_view
+
+    def restore_all_charts(self):
+        """Restore all charts to their original visibility and heights."""
+        for full_view, zoom_view in self.chart_views:
+            full_view.show()
+            zoom_view.show()
+            # Restore original heights if available
+            if full_view in self.original_heights:
+                full_view.setMinimumHeight(self.original_heights[full_view])
+            if zoom_view in self.original_heights:
+                zoom_view.setMinimumHeight(self.original_heights[zoom_view])
+            # Restore maximum width constraint for zoomed charts
+            zoom_view.setMaximumWidth(400)
+        
+        self.expanded_chart = None
 
     def create_font(self, font_type):
         font = QFont(FONT_CONFIG[font_type]['family'])
@@ -1437,6 +1501,8 @@ class StepResponseWidget(QWidget):
         super().__init__(parent)
         self.feature_widget = feature_widget
         self.df = None
+        self.expanded_chart = None
+        self.original_heights = {}  # Store original heights for restoration
         self.setup_ui()
 
     def create_font(self, font_type):
@@ -1516,7 +1582,7 @@ class StepResponseWidget(QWidget):
         charts_layout.setSpacing(10)
         self.chart_views = []
         for axis in ['Roll', 'Pitch', 'Yaw']:
-            chart_view = QChartView()
+            chart_view = ClickableChartView()
             chart_view.setRenderHint(QPainter.Antialiasing)
             chart_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             chart_view.setMinimumHeight(200)
@@ -1534,9 +1600,46 @@ class StepResponseWidget(QWidget):
             chart_view.setCursor(Qt.CrossCursor)  # Add crosshair cursor
             # Connect resize event for responsive annotations
             chart_view.resizeEvent = lambda event, cv=chart_view: self.on_chart_resize(event, cv)
+            # Connect click event for expand functionality
+            chart_view.clicked.connect(lambda cv=chart_view: self.on_chart_clicked(cv))
             self.chart_views.append(chart_view)
             charts_layout.addWidget(chart_view)
         layout.addWidget(self.charts_container)
+
+    def on_chart_clicked(self, clicked_chart_view):
+        """Handle chart click to expand or restore."""
+        # If the clicked chart is already expanded, restore all
+        if self.expanded_chart is clicked_chart_view:
+            self.restore_all_charts()
+        else:
+            # If another chart is expanded, or no chart is expanded
+            self.expand_chart(clicked_chart_view)
+
+    def expand_chart(self, chart_view):
+        """Expand a single chart and hide others."""
+        # Store original heights if not already stored
+        if not self.original_heights:
+            for chart_view_item in self.chart_views:
+                self.original_heights[chart_view_item] = chart_view_item.height()
+        
+        # Hide all charts except the clicked one
+        for chart_view_item in self.chart_views:
+            chart_view_item.hide()
+        
+        # Show only the clicked chart
+        chart_view.show()
+        
+        self.expanded_chart = chart_view
+
+    def restore_all_charts(self):
+        """Restore all charts to their original visibility and heights."""
+        for chart_view_item in self.chart_views:
+            chart_view_item.show()
+            # Restore original heights if available
+            if chart_view_item in self.original_heights:
+                chart_view_item.setMinimumHeight(self.original_heights[chart_view_item])
+        
+        self.expanded_chart = None
 
     def on_chart_resize(self, event, chart_view):
         """Handle chart resize events to reposition annotations."""

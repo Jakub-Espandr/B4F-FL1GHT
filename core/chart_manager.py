@@ -6,9 +6,21 @@ See LICENSE file or contact the authors for full terms.
 from PySide6.QtWidgets import QSizePolicy, QLabel, QToolTip
 from PySide6.QtCharts import QChart, QChartView, QLineSeries, QLegend, QValueAxis
 from PySide6.QtGui import QPainter, QFont, QColor
-from PySide6.QtCore import Qt, QMargins, QPointF
+from PySide6.QtCore import Qt, QMargins, QPointF, Signal
 from utils.config import CHART_CONFIG, COLOR_PALETTE, MOTOR_COLORS, ALTERNATIVE_COLOR_PALETTE, ALTERNATIVE_MOTOR_COLORS
 from utils.data_processor import get_clean_name, decimate_data
+
+class ClickableChartView(QChartView):
+    """A QChartView that emits a signal when clicked."""
+    clicked = Signal()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def mousePressEvent(self, event):
+        """Emit the clicked signal on a mouse press event."""
+        self.clicked.emit()
+        super().mousePressEvent(event)
 
 class ChartManager:
     def __init__(self):
@@ -23,7 +35,7 @@ class ChartManager:
         self.parent = parent  # Store parent reference
         self.chart_views = []
         for i in range(4):
-            chart_view = QChartView()
+            chart_view = ClickableChartView()
             chart_view.setRenderHint(QPainter.Antialiasing)
             chart_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             chart_view.setMinimumHeight(min_chart_height)

@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.2] - 2025-06-22
+
+### Added
+- **Click-to-Expand Chart Functionality**: Interactive chart expansion across all analysis tabs:
+  - **Time Domain Tab**: Click any chart (Roll, Pitch, Yaw, Throttle) to expand it to full screen
+  - **Frequency Domain Tab**: Click any chart (full spectrum or 0-100Hz zoomed) to expand it to full width
+  - **Step Response Tab**: Click any chart (Roll, Pitch, Yaw) to expand it to full screen
+  - **Second click** on expanded chart restores original layout with equal heights
+
+### Improved
+- **Chart Interaction**: Enhanced user experience with full-screen chart viewing
+- **Layout Management**: Smart height and width management for expanded charts
+- **UI Responsiveness**: Smooth transitions between expanded and normal chart layouts
+- **Code Architecture**: Added reusable `ClickableChartView` class for consistent click handling
+
+### Technical Details
+- Added `ClickableChartView` class with `clicked` signal emission
+- Implemented `expand_chart()` and `restore_all_charts()` methods in all chart widgets
+- Added state tracking with `expanded_chart` and `original_heights` attributes
+- Maintained existing functionality (tooltips, resize events, annotations) during expansion
+
+---
+
 ## [0.6.1] - 2025-06-21
 
 ### Added

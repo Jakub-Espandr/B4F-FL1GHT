@@ -27,6 +27,7 @@ class FL1GHTViewer(QWidget):
         self.setWindowTitle("B4F: FL1GHT")
         self.setMinimumSize(400, 400)
         self.previous_tab_index = 0  # Track previous tab index
+        self.expanded_chart = None
         
         # Initialize components
         self.chart_manager = ChartManager()
@@ -94,6 +95,7 @@ class FL1GHTViewer(QWidget):
         chart_views = self.chart_manager.create_chart_views(self, min_chart_height)
         for chart_view in chart_views:
             time_domain_layout.addWidget(chart_view, stretch=2)
+            chart_view.clicked.connect(lambda cv=chart_view: self.on_chart_clicked(cv))
         
         # Spectral analyzer tab
         self.spectral_widget = SpectralAnalyzerWidget(self.feature_widget)
@@ -136,6 +138,22 @@ class FL1GHTViewer(QWidget):
         self.control_widget.zoom_slider.valueChanged.connect(self.zoom_slider_changed)
         self.control_widget.scroll_slider.valueChanged.connect(self.scroll_slider_changed)
         self.control_widget.reset_zoom_button.clicked.connect(self.reset_zoom)
+
+    def on_chart_clicked(self, clicked_chart_view):
+        """Handle chart click to expand or restore."""
+        # If the clicked chart is already expanded, restore all
+        if self.expanded_chart is clicked_chart_view:
+            for chart_view in self.chart_manager.chart_views:
+                chart_view.show()
+            self.expanded_chart = None
+        else:
+            # If another chart is expanded, or no chart is expanded
+            for chart_view in self.chart_manager.chart_views:
+                if chart_view is not clicked_chart_view:
+                    chart_view.hide()
+                else:
+                    chart_view.show() # Ensure the clicked one is visible.
+            self.expanded_chart = clicked_chart_view
 
     def create_font(self, font_type):
         font = QFont(FONT_CONFIG[font_type]['family'])

@@ -120,3 +120,7 @@ coverage/
 *.bak
 *.tmp
 *.temp 
+
+*.jpg
+*.png
+*.code-workspace

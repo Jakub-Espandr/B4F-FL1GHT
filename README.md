@@ -42,6 +42,11 @@ A modern, feature-rich blackbox log viewer for FPV drone flight data analysis. D
 - **Interactive Controls**
   - Zoom, pan, and select data types
   - Customizable smoothing, resolution, and axis ticks
+- **Click-to-Expand Charts**
+  - Click any chart to expand it to full screen for detailed analysis
+  - Available in Time Domain, Frequency Domain, and Step Response tabs
+  - Second click restores original layout with equal heights
+  - Maintains all interactive features (tooltips, zoom, annotations) during expansion
 - **Responsive and Lightweight**
   - Built with PySide6 for fast, efficient rendering
   - Minimal dependencies
