@@ -93,26 +93,18 @@ A modern, feature-rich blackbox log viewer for FPV drone flight data analysis. D
 ## 🚀 Installation
 
 ```bash
+# Clone the repository
 git clone https://github.com/Jakub-Espandr/B4F-FL1GHT.git
-cd b4f-fl1ght
-```
+cd B4F-FL1GHT
 
-Create a virtual environment (optional but recommended):
-
-```bash
+# (Optional) Create and activate virtual environment
 python -m venv venv
-source venv/bin/activate    # On Windows: venv\Scripts\activate
-```
+source venv/bin/activate    # On Windows use: venv\Scripts\activate
 
-Install required Python libraries:
-
-```bash
+# Install dependencies
 pip install -r requirements.txt
-```
 
-Ensure the decoder tool is executable:
-
-```bash
+# Ensure blackbox decoder is executable
 chmod +x tools/blackbox_decode
 ```
 
@@ -134,7 +126,7 @@ python main.py
 ## 📁 Project Structure
 
 ```
-b4f-fl1ght/
+B4F-FL1GHT/
 ├── main.py                  # Entry point
 ├── core/
 │   ├── fl1ght_viewer.py     # Main viewer window
