@@ -102,6 +102,7 @@ out/
 .env.test
 .env.production
 
+
 # Logs
 logs
 *.log
@@ -112,6 +113,8 @@ yarn-error.log*
 # Testing
 coverage/
 .nyc_output/
+some.md
+AI_ASSISTANT_INSTRUCTIONS.md
 
 # Misc
 .cache/

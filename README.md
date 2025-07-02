@@ -30,6 +30,17 @@ A modern, feature-rich blackbox log viewer for FPV drone flight data analysis. D
 - **Frequency Evolution**
   - Spectrogram visualization showing frequency content over time
   - Heatmap display with configurable window size control
+- **Error & Performance Analysis**
+  - Comprehensive drone performance evaluation with six analysis types:
+    - **Tracking Error**: Setpoint vs actual gyro response analysis
+    - **I-Term**: Integral term behavior and saturation detection
+    - **PID Output**: Combined P+I+D controller output analysis
+    - **Step Response**: Setpoint and actual traces with dual-line visualization
+    - **Error Histogram**: Statistical error distribution with KDE overlay
+    - **Cumulative Error**: Running sum of tracking errors over time
+  - Multi-axis support for Roll, Pitch, and Yaw with dedicated charts
+  - Professional visualization with consistent scaling and zero-reference lines
+  - Interactive radio button controls for switching between analysis types
 
 - **Export Plots**
   - One-click export of all plots as 1200 DPI JPEG images
@@ -62,6 +73,7 @@ A modern, feature-rich blackbox log viewer for FPV drone flight data analysis. D
     - Step Response: Up to 5 flights
     - Noise Analysis: Single flight
     - Frequency Evolution: Single flight
+    - Error & Performance: Single flight
     - Drone Config: Up to 2 flights
 
 ---

@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QFont, QPainter
 from PySide6.QtCore import Qt, QMargins
 from PySide6.QtCharts import QChart
-from ui.widgets import FeatureSelectionWidget, ControlWidget, SpectralAnalyzerWidget, StepResponseWidget, FrequencyAnalyzerWidget, PlotExportWidget, ParametersWidget, SpectrogramWidget
+from ui.widgets import FeatureSelectionWidget, ControlWidget, SpectralAnalyzerWidget, StepResponseWidget, FrequencyAnalyzerWidget, PlotExportWidget, ParametersWidget, SpectrogramWidget, ErrorPerformanceWidget
 from .chart_manager import ChartManager
 from utils.data_processor import normalize_time_data, get_clean_name, decimate_data
 from utils.config import FONT_CONFIG
@@ -112,6 +112,9 @@ class FL1GHTViewer(QWidget):
         # Drone Config tab
         self.parameters_widget = ParametersWidget(self.feature_widget)
         
+        # Error & Performance Analysis tab
+        self.error_performance_widget = ErrorPerformanceWidget(self.feature_widget)
+        
         # Export tab
         self.export_widget = PlotExportWidget()
         
@@ -121,6 +124,7 @@ class FL1GHTViewer(QWidget):
         self.tab_widget.addTab(self.step_response_widget, "Step Response")
         self.tab_widget.addTab(self.frequency_analyzer_widget, "Noise Analysis")
         self.tab_widget.addTab(self.spectrogram_widget, "Frequency Evolution")
+        self.tab_widget.addTab(self.error_performance_widget, "Error && Performance")
         self.tab_widget.addTab(self.parameters_widget, "Drone Config")
         self.tab_widget.addTab(self.export_widget, "Export Plots")
         
@@ -846,6 +850,10 @@ class FL1GHTViewer(QWidget):
             if hasattr(self.feature_widget, 'selected_logs') and self.feature_widget.selected_logs:
                 self.parameters_widget.update_parameters(self.feature_widget.selected_logs[:2])
             self.feature_widget.legend_group.setVisible(False)
+            try:
+                self.error_performance_widget.update_error_performance(self.feature_widget.current_log)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to update error/performance plots: {str(e)}")
         elif current_tab == 6:  # Export (changed from 5 to 6)
             # Export functionality is handled in on_tab_changed
             pass
@@ -988,10 +996,10 @@ class FL1GHTViewer(QWidget):
         # Store the previous tab index before any logic
         prev_tab = self.previous_tab_index
         self.previous_tab_index = index
-        # 0 = Time Domain, 1 = Frequency Domain, 2 = Step Response, 3 = Noise Analysis, 4 = Frequency Evolution, 5 = Drone Config, 6 = Export
-        if index == 6:  # Export tab (changed from 5 to 6)
-            # Only export if we're coming from a valid tab (0-4)
-            if 0 <= prev_tab <= 4:
+        # 0 = Time Domain, 1 = Frequency Domain, 2 = Step Response, 3 = Noise Analysis, 4 = Frequency Evolution, 5 = Error & Performance, 6 = Drone Config, 7 = Export
+        if index == 7:  # Export tab (was 6, now 7)
+            # Only export if we're coming from a valid tab (0-5)
+            if 0 <= prev_tab <= 5:
                 self.export_widget.set_previous_tab(prev_tab)
                 self.export_widget.export_plots()
             else:
@@ -1077,7 +1085,11 @@ class FL1GHTViewer(QWidget):
             # Select first log if multiple are selected
             self.select_first_log_if_multiple()
             # Removed auto-plotting - plots will only be generated when user clicks "Show Plot" button
-        elif index == 5:  # Drone Config (changed from 4 to 5)
+        elif index == 5:  # Error & Performance
+            # Disable checkboxes for error & performance (handled in widget)
+            self.feature_widget._set_checkboxes_enabled(False)
+            self.feature_widget.legend_group.setVisible(False)
+        elif index == 6:  # Drone Config
             self.feature_widget._set_checkboxes_enabled(False)
             # Allow up to 2 logs to be selected in Drone Config tab
             self.feature_widget.logs_list.setSelectionMode(QListWidget.ExtendedSelection)

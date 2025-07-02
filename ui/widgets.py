@@ -10,11 +10,11 @@ from PySide6.QtWidgets import (
     QDialog, QLineEdit, QListWidget, QApplication, QDoubleSpinBox,
     QDialogButtonBox, QLineEdit, QTextEdit, QScrollArea, QFrame, QSizePolicy,
     QToolTip, QSplitter, QFormLayout, QSpinBox, QDoubleSpinBox, QComboBox,
-    QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView
+    QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QButtonGroup
 )
 from PySide6.QtGui import QFont, QColor, QPainter, QPen, QIcon, QImage, QPixmap, QPalette
-from PySide6.QtCore import Qt, QMargins, QTimer, QSize, QRect, QPoint, Signal
-from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis, QAreaSeries, QCategoryAxis, QLegend
+from PySide6.QtCore import Qt, QMargins, QTimer, QSize, QRect, QPoint, Signal, QPointF
+from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis, QAreaSeries, QCategoryAxis, QLegend, QBarSet, QBarSeries, QBarCategoryAxis
 from utils.config import FONT_CONFIG, COLOR_PALETTE, MOTOR_COLORS, ALTERNATIVE_COLOR_PALETTE
 from utils.data_processor import get_clean_name
 import numpy as np
@@ -33,6 +33,7 @@ import json
 import tempfile
 import warnings
 from utils.spectrogram_utils import calculate_spectrogram
+from utils import error_analysis
 
 class ClickableChartView(QChartView):
     """A QChartView that emits a signal when clicked."""
@@ -2231,6 +2232,8 @@ class PlotExportWidget(QWidget):
                 self._export_frequency_analyzer_plots(parent)
             elif self.previous_tab_index == 4:  # Frequency Evolution
                 self._export_spectrogram_plots(parent)
+            elif self.previous_tab_index == 5:  # Error & Performance
+                self._export_error_performance_plots(parent)
             else:
                 self.status_label.setText("Invalid tab index for export")
         except Exception as e:
@@ -2820,6 +2823,95 @@ class PlotExportWidget(QWidget):
             print(f"Error exporting frequency evolution plots: {e}\n{traceback.format_exc()}")
             self.status_label.setText(f"Error exporting frequency evolution plots: {str(e)}")
 
+    def _export_error_performance_plots(self, parent):
+        try:
+            # Find the ErrorPerformanceWidget instance
+            error_widget = None
+            if hasattr(parent, 'error_performance_widget'):
+                error_widget = parent.error_performance_widget
+            if error_widget is None or not hasattr(error_widget, 'chart_views') or not error_widget.chart_views:
+                self.status_label.setText("No Error & Performance plots to export")
+                return
+            chart_views = error_widget.chart_views
+            export_dir = self._get_export_dir(parent)
+            import os
+            os.makedirs(export_dir, exist_ok=True)
+            import datetime
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            current_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            log_name = parent.feature_widget.selected_logs[0] if hasattr(parent.feature_widget, 'selected_logs') and parent.feature_widget.selected_logs else "LogFile"
+            log_name = os.path.splitext(log_name)[0]  # Remove .bbl extension
+            drone_name = self._get_drone_name(parent)
+            drone_name_filename = drone_name.replace(' ', '_') if drone_name else ''
+            use_drone = self._use_drone_in_filename(parent)
+            author_name = self._get_author_name(parent)
+            from PySide6.QtGui import QImage, QPainter, QPixmap, QFont, QColor
+            from PySide6.QtCore import QSize, Qt, QRect
+            scale_factor = 3.5
+            header_height = int(100 * scale_factor)
+            width = int(chart_views[0].width() * scale_factor)
+            chart_height = int(sum(view.height() for view in chart_views) * scale_factor)
+            total_height = chart_height + header_height
+            combined_image = QImage(width, total_height, QImage.Format_ARGB32)
+            combined_image.fill(Qt.white)
+            painter = QPainter(combined_image)
+            try:
+                painter.setRenderHint(QPainter.Antialiasing, True)
+                painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+                header_font = QFont("fccTYPO", int(32 * scale_factor / 3.0))
+                header_font.setBold(True)
+                painter.setFont(header_font)
+                painter.setPen(QColor(0, 0, 0))
+                header_text = f"Log: {log_name} | Error & Performance | Date: {current_date}"
+                if author_name:
+                    header_text += f" | Author: {author_name}"
+                if drone_name:
+                    header_text += f" | Drone: {drone_name}"
+                header_rect = QRect(0, 0, width, header_height)
+                painter.fillRect(header_rect, QColor(230, 230, 240))
+                painter.drawText(header_rect, Qt.AlignCenter | Qt.AlignTop, header_text)
+                settings_font = QFont("fccTYPO", int(28 * scale_factor / 3.0))
+                settings_font.setBold(True)
+                painter.setFont(settings_font)
+                # Get line width info
+                # Show which radio button (plot option) was selected
+                selected_option = None
+                if hasattr(error_widget, 'plot_checkboxes'):
+                    for cb in error_widget.plot_checkboxes:
+                        if cb.isChecked():
+                            selected_option = cb.text()
+                            break
+                if selected_option is None:
+                    selected_option = "(No plot option selected)"
+                settings_text = f"Selected Plot: {selected_option}"
+                settings_rect = QRect(0, int(header_height/2), width, int(header_height/2))
+                painter.drawText(settings_rect, Qt.AlignCenter | Qt.AlignTop, settings_text)
+                # No legend for error/performance tab
+                painter.setPen(QColor(180, 180, 180))
+                current_y = header_height
+                for chart_view in chart_views:
+                    original_size = chart_view.size()
+                    scaled_size = QSize(int(original_size.width() * scale_factor), int(original_size.height() * scale_factor))
+                    pixmap = QPixmap(scaled_size)
+                    pixmap.fill(Qt.white)
+                    temp_painter = QPainter(pixmap)
+                    temp_painter.setRenderHint(QPainter.Antialiasing, True)
+                    chart_view.render(temp_painter, target=pixmap.rect(), source=chart_view.rect())
+                    temp_painter.end()
+                    painter.drawPixmap(0, current_y, pixmap)
+                    current_y += pixmap.height()
+            finally:
+                painter.end()
+            if use_drone and drone_name:
+                filename = f"{drone_name_filename}-{log_name}-ErrorPerformance-{timestamp}.jpg"
+            else:
+                filename = f"{log_name}-ErrorPerformance-{timestamp}.jpg"
+            filepath = os.path.join(export_dir, filename)
+            combined_image.save(filepath, "JPG", quality=100)
+            self.status_label.setText(f"Exported Error & Performance plots to {export_dir} as {filename}")
+        except Exception as e:
+            self.status_label.setText(f"Error exporting Error & Performance plots: {str(e)}")
+
 class ParametersWidget(QWidget):
     def __init__(self, feature_widget, parent=None):
         super().__init__(parent)
@@ -3306,3 +3398,445 @@ class SpectrogramWidget(QWidget):
         nperseg = 2 ** value
         self.window_value_label.setText(str(nperseg))
         self.update_spectrogram(self.df)
+
+class ErrorPerformanceWidget(QWidget):
+    def __init__(self, feature_widget, parent=None):
+        super().__init__(parent)
+        self.feature_widget = feature_widget
+        self.df = None
+        self.chart_views = []
+        self.expanded_chart = None  # Track which chart is expanded
+        self.original_heights = {}  # Store original heights for restoration
+        self.plot_options = [
+            ("Tracking Error", True),
+            ("I-Term", False),
+            ("PID Output", False),
+            ("Step Response", False),
+            ("Error Histogram", False),
+            ("Cumulative Error", False),
+        ]
+        self.setup_ui()
+
+    def setup_ui(self):
+        self.layout = QVBoxLayout(self)
+        self.layout.setSpacing(10)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        # Controls container for checkboxes and warning label
+        self.controls_container = QWidget()
+        controls_layout = QVBoxLayout(self.controls_container)
+        controls_layout.setSpacing(2)  # Reduced spacing between elements
+        controls_layout.setContentsMargins(0, 10, 0, 5)  # Add top margin to move buttons down
+        # Add plot selection checkboxes as radio buttons
+        self.plot_checkboxes = []
+        self.button_group = QButtonGroup(self.controls_container)
+        self.button_group.setExclusive(True)
+        checkbox_row = QHBoxLayout()
+        checkbox_row.setSpacing(30)  # Larger spacing between radio buttons
+        checkbox_row.addStretch()  # Add stretch before buttons to center them
+        for i, (name, checked) in enumerate(self.plot_options):
+            cb = QCheckBox(name)
+            cb.setChecked(checked)
+            self.button_group.addButton(cb, i)
+            cb.stateChanged.connect(self.on_plot_option_changed)
+            fcc_font = QFont("fccTYPO", 14)
+            cb.setFont(fcc_font)
+            # Remove any internal margins/padding from the checkbox
+            cb.setStyleSheet("QCheckBox { margin: 0px; padding: 0px; }")
+            self.plot_checkboxes.append(cb)
+            checkbox_row.addWidget(cb)
+        checkbox_row.addStretch()  # Add stretch after buttons to center them
+        controls_layout.addLayout(checkbox_row)
+        self.warning_label = QLabel("")
+        self.warning_label.setAlignment(Qt.AlignCenter)
+        self.warning_label.setStyleSheet("color: #ff5555; font-size: 16px;")
+        controls_layout.addWidget(self.warning_label)
+        self.layout.addWidget(self.controls_container)
+        # Charts container
+        self.charts_container = QWidget()
+        self.charts_layout = QVBoxLayout(self.charts_container)
+        self.charts_layout.setSpacing(10)
+        self.charts_layout.setContentsMargins(0, 0, 0, 0)
+        self.charts_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.layout.addWidget(self.charts_container, stretch=1)
+        # No addStretch after charts_container
+
+    def on_plot_option_changed(self):
+        # Only allow one checked at a time (radio button behavior)
+        sender = self.sender()
+        if sender.isChecked():
+            for cb in self.plot_checkboxes:
+                if cb is not sender:
+                    cb.setChecked(False)
+        if self.df is not None:
+            self.update_error_performance(self.df)
+
+    def get_selected_plot_indices(self):
+        return [i for i, cb in enumerate(self.plot_checkboxes) if cb.isChecked()]
+
+    def clear_all_plots(self):
+        for chart_view in self.chart_views:
+            self.charts_layout.removeWidget(chart_view)
+            chart_view.setParent(None)
+            chart_view.deleteLater()
+        self.chart_views = []
+        self.expanded_chart = None
+        self.original_heights = {}
+
+    def on_chart_clicked(self, clicked_chart_view):
+        """Handle chart click to expand or restore."""
+        # If the clicked chart is already expanded, restore all
+        if self.expanded_chart is clicked_chart_view:
+            self.restore_all_charts()
+        else:
+            # If another chart is expanded, or no chart is expanded
+            self.expand_chart(clicked_chart_view)
+
+    def expand_chart(self, chart_view):
+        """Expand a single chart and hide others."""
+        # Store original heights if not already stored
+        if not self.original_heights:
+            for cv in self.chart_views:
+                self.original_heights[cv] = cv.height()
+        
+        # Hide all charts except the clicked one
+        for cv in self.chart_views:
+            if cv is not chart_view:
+                cv.hide()
+        
+        # Ensure the expanded chart is visible and raised to front
+        chart_view.show()
+        chart_view.raise_()
+        
+        self.expanded_chart = chart_view
+
+    def restore_all_charts(self):
+        """Restore all charts to their original visibility and heights."""
+        for cv in self.chart_views:
+            cv.show()
+            # Restore original heights if available
+            if cv in self.original_heights:
+                cv.setMinimumHeight(self.original_heights[cv])
+        
+        self.expanded_chart = None
+        self.original_heights = {}
+
+
+
+    def create_chart_view(self, x, y, title, x_label, y_label, color=QColor("orange"), is_hist=False, x_min=None, x_max=None):
+        chart = QChart()
+        chart.setTitle(title)
+        fcc_font = QFont("fccTYPO", 12)
+        chart.setTitleFont(fcc_font)
+        chart.setMargins(QMargins(10, 10, 10, 10))
+        chart.legend().setVisible(False)
+        chart_view = ClickableChartView(chart)
+        chart_view.setRenderHint(QPainter.Antialiasing)
+        chart_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        chart_view._tip_line = None  # For crosshair line
+        crosshair_pen = QPen(QColor("red"), 1, Qt.SolidLine)
+        if is_hist:
+            import numpy as np
+            from scipy.stats import gaussian_kde
+            from PySide6.QtCore import QTimer
+            # Use provided x_min/x_max for binning if given
+            if x_min is not None and x_max is not None:
+                counts, bins = np.histogram(y, bins=100, range=(x_min, x_max))
+            else:
+                counts, bins = np.histogram(y, bins=100)
+            # Step plot: repeat bin edges and counts for stairs
+            step_x = []
+            step_y = []
+            for i in range(len(counts)):
+                step_x.extend([bins[i], bins[i+1]])
+                step_y.extend([counts[i], counts[i]])
+            step_series = QLineSeries()
+            for xi, yi in zip(step_x, step_y):
+                step_series.append(xi, yi)
+            step_series.setColor(QColor("#a259e6"))  # purple
+            step_series.setName("Histogram")
+            # KDE curve
+            kde = gaussian_kde(y, bw_method=0.1) # 0.1 is the bandwidth smoothing factor
+            kde_x = np.linspace(bins[0], bins[-1], 500)
+            kde_y = kde(kde_x) * len(y) * (bins[1] - bins[0])  # scale to match histogram
+            kde_series = QLineSeries()
+            for xi, yi in zip(kde_x, kde_y):
+                kde_series.append(xi, yi)
+            kde_series.setColor(QColor("#00bfff"))  # cyan
+            kde_series.setName("KDE")
+            # Chart setup
+            chart.addSeries(step_series)
+            chart.addSeries(kde_series)
+            x_axis = QValueAxis()
+            x_axis.setTitleText(x_label)
+            x_axis.setRange(bins[0], bins[-1])
+            x_axis.setTickCount(11)
+            chart.addAxis(x_axis, Qt.AlignBottom)
+            step_series.attachAxis(x_axis)
+            kde_series.attachAxis(x_axis)
+            y_axis = QValueAxis()
+            y_axis.setTitleText(y_label)
+            chart.addAxis(y_axis, Qt.AlignLeft)
+            step_series.attachAxis(y_axis)
+            kde_series.attachAxis(y_axis)
+            # fccTYPO font for all elements
+            x_axis.setLabelsFont(fcc_font)
+            x_axis.setTitleFont(fcc_font)
+            y_axis.setLabelsFont(fcc_font)
+            y_axis.setTitleFont(fcc_font)
+            chart.legend().setFont(fcc_font)
+            # Add vertical line at x=0 after chart is shown
+            def draw_zero_line():
+                # Remove previous zero line if it exists
+                if hasattr(chart_view, '_zero_line') and chart_view._zero_line is not None:
+                    chart.scene().removeItem(chart_view._zero_line)
+                    chart_view._zero_line = None
+                # Ensure 0 is within the axis range (with a small epsilon for float precision)
+                x_min_val = x_axis.min()
+                x_max_val = x_axis.max()
+                epsilon = (x_max_val - x_min_val) * 1e-8
+                if (x_min_val - epsilon) < 0 < (x_max_val + epsilon):
+                    from PySide6.QtWidgets import QGraphicsLineItem
+                    zero_pen = QPen(QColor("#00ff00"), 1, Qt.SolidLine)  # green
+                    y_min = y_axis.min()
+                    y_max = y_axis.max()
+                    # Use axis' mapToPosition for x=0
+                    p1 = chart.mapToPosition(QPointF(0.0, y_min))
+                    p2 = chart.mapToPosition(QPointF(0.0, y_max))
+                    # Snap x to integer pixel for crispness
+                    x_pixel = round(p1.x())
+                    p1.setX(x_pixel)
+                    p2.setX(x_pixel)
+                    zero_line = QGraphicsLineItem(p1.x(), p1.y(), p2.x(), p2.y())
+                    zero_line.setPen(zero_pen)
+                    zero_line.setZValue(10)
+                    chart.scene().addItem(zero_line)
+                    chart_view._zero_line = zero_line
+            chart_view._zero_line = None
+            # Connect plotAreaChanged to redraw the zero line robustly
+            chart.plotAreaChanged.connect(draw_zero_line)
+            # Initial draw
+            draw_zero_line()
+            # Remove QTimer and resizeEvent logic for zero line
+            # Tooltip for step and KDE plots
+            def hist_tooltip(event):
+                pos = event.pos()
+                chart_item = chart.mapToValue(pos, step_series)
+                chart_item_kde = chart.mapToValue(pos, kde_series)
+                # Find nearest step_x
+                if chart_item is not None:
+                    xval = chart_item.x()
+                    idx = int(np.argmin([abs(xval - sx) for sx in step_x]))
+                    yval = step_y[idx] if 0 <= idx < len(step_y) else 0
+                    # Remove previous tip line
+                    if chart_view._tip_line is not None:
+                        chart.scene().removeItem(chart_view._tip_line)
+                        chart_view._tip_line = None
+                    # Draw vertical line at xval
+                    y_min = y_axis.min()
+                    y_max = y_axis.max()
+                    p1 = chart.mapToPosition(QPointF(xval, y_min))
+                    p2 = chart.mapToPosition(QPointF(xval, y_max))
+                    from PySide6.QtWidgets import QGraphicsLineItem
+                    tip_line = QGraphicsLineItem(p1.x(), p1.y(), p2.x(), p2.y())
+                    tip_line.setPen(crosshair_pen)
+                    chart.scene().addItem(tip_line)
+                    chart_view._tip_line = tip_line
+                    # KDE value at xval
+                    kde_val = float(kde(xval)) * len(y) * (bins[1] - bins[0])
+                    QToolTip.setFont(fcc_font)
+                    QToolTip.showText(chart_view.mapToGlobal(pos), f"X: {xval:.2f}\nCount: {yval}\nKDE: {kde_val:.2f}", chart_view)
+                else:
+                    if chart_view._tip_line is not None:
+                        chart.scene().removeItem(chart_view._tip_line)
+                        chart_view._tip_line = None
+                    QToolTip.hideText()
+            def leave_event(event):
+                if chart_view._tip_line is not None:
+                    chart.scene().removeItem(chart_view._tip_line)
+                    chart_view._tip_line = None
+                QToolTip.hideText()
+                QChartView.leaveEvent(chart_view, event)
+            chart_view.setMouseTracking(True)
+            chart_view.mouseMoveEvent = lambda event: (hist_tooltip(event), QChartView.mouseMoveEvent(chart_view, event))
+            chart_view.leaveEvent = leave_event
+            # Set fccTYPO font for chart_view
+            chart_view.setFont(fcc_font)
+            chart_view.setStyleSheet("font-family: 'fccTYPO'; font-size: 12pt;")
+        else:
+            import numpy as np
+            series = QLineSeries()
+            for xi, yi in zip(x, y):
+                series.append(xi, yi)
+            series.setColor(color)
+            chart.addSeries(series)
+            x_axis = QValueAxis()
+            x_axis.setTitleText(x_label)
+            chart.addAxis(x_axis, Qt.AlignBottom)
+            series.attachAxis(x_axis)
+            y_axis = QValueAxis()
+            y_axis.setTitleText(y_label)
+            chart.addAxis(y_axis, Qt.AlignLeft)
+            series.attachAxis(y_axis)
+            # Apply fccTYPO font to axes
+            x_axis.setLabelsFont(fcc_font)
+            x_axis.setTitleFont(fcc_font)
+            y_axis.setLabelsFont(fcc_font)
+            y_axis.setTitleFont(fcc_font)
+            chart.legend().setFont(fcc_font)
+            # Tooltip for line plot with vertical line and interpolated y
+            def line_tooltip(event):
+                pos = event.pos()
+                chart_item = chart.mapToValue(pos, series)
+                if chart_item is not None:
+                    # Remove previous tip line
+                    if chart_view._tip_line is not None:
+                        chart.scene().removeItem(chart_view._tip_line)
+                        chart_view._tip_line = None
+                    # Draw vertical line at x
+                    xval = chart_item.x()
+                    y_min = y_axis.min()
+                    y_max = y_axis.max()
+                    p1 = chart.mapToPosition(QPointF(xval, y_min))
+                    p2 = chart.mapToPosition(QPointF(xval, y_max))
+                    from PySide6.QtWidgets import QGraphicsLineItem
+                    tip_line = QGraphicsLineItem(p1.x(), p1.y(), p2.x(), p2.y())
+                    tip_line.setPen(crosshair_pen)
+                    chart.scene().addItem(tip_line)
+                    chart_view._tip_line = tip_line
+                    # Interpolate y value at xval
+                    y_interp = np.interp(xval, x, y)
+                    QToolTip.showText(chart_view.mapToGlobal(pos), f"X: {xval:.2f}\nY: {y_interp:.2f}", chart_view)
+                else:
+                    if chart_view._tip_line is not None:
+                        chart.scene().removeItem(chart_view._tip_line)
+                        chart_view._tip_line = None
+                    QToolTip.hideText()
+            def leave_event(event):
+                if chart_view._tip_line is not None:
+                    chart.scene().removeItem(chart_view._tip_line)
+                    chart_view._tip_line = None
+                QToolTip.hideText()
+                QChartView.leaveEvent(chart_view, event)
+            chart_view.setMouseTracking(True)
+            chart_view.mouseMoveEvent = lambda event: (line_tooltip(event), QChartView.mouseMoveEvent(chart_view, event))
+            chart_view.leaveEvent = leave_event
+        return chart_view
+
+    def update_error_performance(self, df):
+        """Update the error performance plots using the new utils functions"""
+        self.clear_all_plots()
+        self.warning_label.setText("")
+        self.df = df
+        
+        if df is None or df.empty:
+            self.warning_label.setText("No data loaded.")
+            return
+        
+        # Get selected plot type
+        selected_plot_type = None
+        for i, checkbox in enumerate(self.plot_checkboxes):
+            if checkbox.isChecked():
+                plot_name, _ = self.plot_options[i]
+                selected_plot_type = plot_name
+                break
+        
+        if selected_plot_type is None:
+            self.warning_label.setText("No plot type selected.")
+            return
+        
+        # Get axis labels for the selected plot type
+        x_label, y_label = error_analysis.get_plot_labels(selected_plot_type)
+        is_hist = error_analysis.is_histogram_plot(selected_plot_type)
+        
+        # For histograms, get global error range for consistent scaling
+        x_min, x_max = None, None
+        if is_hist:
+            x_min, x_max = error_analysis.calculate_global_error_range(df)
+        
+        # Create charts for each axis
+        charts_to_add = []
+        missing_data = []
+        
+        for axis in ['roll', 'pitch', 'yaw']:
+            # Get plot data from utils
+            plot_data = error_analysis.get_plot_data(df, selected_plot_type, axis)
+            
+            if plot_data is None:
+                missing_data.append(axis)
+                continue
+            
+            # Handle different plot types
+            if selected_plot_type == "Step Response":
+                # Step response returns (time, setpoint, actual)
+                time, setpoint, actual = plot_data
+                if time is None:
+                    missing_data.append(axis)
+                    continue
+                
+                # Create chart with setpoint
+                title = f"{axis.capitalize()} Step Response"
+                chart_view = self.create_chart_view(time, setpoint, title, x_label, y_label, QColor("black"))
+                
+                # Enable legend for step response and set setpoint series name
+                chart = chart_view.chart()
+                chart.legend().setVisible(True)
+                setpoint_series = chart.series()[0]  # The first series created by create_chart_view
+                setpoint_series.setName("Setpoint")
+                
+                # Add actual as second series
+                actual_series = QLineSeries()
+                actual_series.setColor(QColor("magenta"))
+                actual_series.setName("Actual")
+                for xi, yi in zip(time, actual):
+                    actual_series.append(xi, yi)
+                chart.addSeries(actual_series)
+                actual_series.attachAxis(chart.axisX())
+                actual_series.attachAxis(chart.axisY())
+                
+            elif is_hist:
+                # Histogram data is just the error values
+                error_data = plot_data
+                if error_data is None:
+                    missing_data.append(axis)
+                    continue
+                
+                title = f"{axis.capitalize()} Error Histogram"
+                chart_view = self.create_chart_view(
+                    error_data, error_data, title, x_label, y_label,
+                    color=QColor("#a259e6"), is_hist=True, x_min=x_min, x_max=x_max
+                )
+                
+            else:
+                # Regular line plots return (time, data)
+                time, data = plot_data
+                if time is None or data is None:
+                    missing_data.append(axis)
+                    continue
+                
+                title = f"{axis.capitalize()} {selected_plot_type}"
+                color_map = {
+                    "Tracking Error": QColor("orange"),
+                    "I-Term": QColor("blue"),
+                    "PID Output": QColor("green"),
+                    "Cumulative Error": QColor("brown")
+                }
+                color = color_map.get(selected_plot_type, QColor("orange"))
+                chart_view = self.create_chart_view(time, data, title, x_label, y_label, color)
+            
+            charts_to_add.append(chart_view)
+        
+        # Add charts to layout
+        for chart_view in charts_to_add:
+            self.charts_layout.addWidget(chart_view, stretch=1)  # Equal stretch for all charts
+            chart_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            chart_view.setMinimumHeight(200)  # Ensure equal heights
+            # Connect click signal for expand functionality
+            chart_view.clicked.connect(lambda cv=chart_view: self.on_chart_clicked(cv))
+        
+        self.chart_views = charts_to_add
+        
+        # Update warning label
+        if missing_data:
+            self.warning_label.setText(f"Missing data for {selected_plot_type} on axes: {', '.join(missing_data)}")
+        else:
+            self.warning_label.setText("")

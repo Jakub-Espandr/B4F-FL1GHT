@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0] - 2025-07-03
+
+### Added
+- **Error & Performance Analysis Tab**: Comprehensive new analysis tab for drone performance evaluation:
+  - **Six Analysis Types**: Tracking Error, I-Term, PID Output, Step Response, Error Histogram, and Cumulative Error
+  - **Multi-Axis Support**: Individual analysis for Roll, Pitch, and Yaw axes with dedicated charts
+  - **Interactive Plot Selection**: Radio button controls for switching between different analysis types
+  - **Professional Visualization**: 
+    - Histogram plots with KDE (Kernel Density Estimation) overlay for error distribution analysis
+    - Step response plots showing both setpoint and actual traces with legends
+    - Time-series plots for tracking error, I-term, PID output, and cumulative error
+  - **Advanced Features**:
+    - Global error range normalization for consistent histogram comparison across axes
+    - Vertical zero-reference lines on histograms for error distribution visualization
+    - Missing data detection with graceful fallback and user warnings
+    - Click-to-expand functionality for detailed chart analysis
+    - Full export support with high-quality image generation
+
+### Technical Details
+- **Calculation Functions**: 
+  - `calculate_tracking_error()`: Setpoint minus actual gyro values
+  - `calculate_i_term()`: Integral term extraction from PID controller
+  - `calculate_pid_output()`: Combined P+I+D terms with actuator limits
+  - `calculate_step_response_data()`: Setpoint and actual traces for step analysis
+  - `calculate_error_histogram_data()`: Error distribution with statistical analysis
+  - `calculate_cumulative_error()`: Running sum of tracking errors over time
+- **Data Processing**: Robust column detection with multiple naming patterns and graceful degradation
+- **Export Integration**: Full compatibility with existing export system including tab-specific headers
+
+---
+
 ## [0.6.2] - 2025-06-22
 
 ### Added
