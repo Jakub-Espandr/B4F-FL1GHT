@@ -2,6 +2,53 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.1] - 2025-08-06
+
+### Added
+- **Enhanced Noise Analysis (4-Plot System)**: Advanced visualization with four plot types per axis:
+  - **Gyro (Filtered)**: Processed gyroscope data visualization
+  - **Gyro (Raw)**: Unfiltered gyroscope data using `gyroUnfilt` columns
+  - **D-Term (Filtered)**: Processed derivative term analysis
+  - **D-Term (Unfiltered)**: Raw derivative term calculated as `derivative(raw gyro) × D-gain`
+  - **3×4 Grid Layout**: Roll, Pitch, Yaw for each signal type with consistent scaling
+  - **D-Gain Extraction**: Automatic parsing of PID parameters from BBL headers for accurate unfiltered D-term calculation
+  - **Interactive Features**: Logarithmic scaling, gain adjustment (1x-10x), interactive tooltips
+
+### Improved
+- **Flight Duration Calculation**: Replaced file size estimation with actual time-based duration calculation:
+  - **Accurate Duration**: Uses `blackbox_decode` to extract actual flight time from time-series data
+  - **Real-time Processing**: Calculates duration during flight selection dialog with progress feedback
+  - **Enhanced UI**: Loading messages with success/warning indicators and automatic cleanup
+  - **Robust Error Handling**: Graceful fallback to estimated duration if actual calculation fails
+- **Raw Gyro Data Detection**: Improved column detection prioritizing `gyroUnfilt` over `debug` columns:
+  - **Better Data Source**: Uses `gyroUnfilt[X]` as primary source for raw gyroscope data
+  - **Fallback Support**: Maintains compatibility with `debug` columns when `gyroUnfilt` unavailable
+  - **Enhanced Reliability**: More accurate raw data visualization for noise analysis
+- **Comprehensive Help System**: Complete user guide with detailed explanations:
+  - **Detailed Tab Explanations**: In-depth coverage of all analysis tabs and their features
+  - **Navigation & Controls**: Complete guide to chart interactions and UI controls
+  - **Advanced Features**: Statistical analysis, PID tuning support, vibration analysis
+  - **Tips & Best Practices**: Workflow recommendations for different analysis types
+  - **Troubleshooting Section**: Common issues and debug features
+  - **Technical Details**: Analysis methods, data processing, and visualization features
+
+### Fixed
+- **Flight Selection Dialog**: Fixed `file_path` parameter passing and `blackbox_decode_path` initialization
+- **Command-line Arguments**: Corrected `blackbox_decode` arguments from `-f` to `--index` with proper flags
+- **Debug Output**: Fixed debug level checking logic for consistent verbose logging
+- **UI Feedback**: Improved loading message visibility and styling for duration calculation
+
+### Technical Details
+- **New Functions**:
+  - `compute_unfiltered_dterm()`: Calculates raw D-term using derivative and D-gain
+  - `get_d_gain()`: Extracts D-gain values from PID parameters with fallback logic
+  - `get_actual_flight_duration()`: Real-time duration calculation from time data
+- **Enhanced Data Processing**: Improved column detection patterns and error handling
+- **UI Improvements**: Better progress feedback and status message management
+- **Code Architecture**: More robust error handling and graceful degradation
+
+---
+
 ## [0.7.0] - 2025-07-03
 
 ### Added

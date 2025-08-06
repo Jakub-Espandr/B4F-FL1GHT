@@ -3840,3 +3840,478 @@ class ErrorPerformanceWidget(QWidget):
             self.warning_label.setText(f"Missing data for {selected_plot_type} on axes: {', '.join(missing_data)}")
         else:
             self.warning_label.setText("")
+
+class HelpWidget(QWidget):
+    """Help and usage instructions widget"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setup_ui()
+    
+    def setup_ui(self):
+        """Setup the help interface"""
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Create scroll area for help content
+        from PySide6.QtWidgets import QScrollArea, QTextEdit
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background-color: #1e1e1e;
+            }
+            QScrollBar:vertical {
+                background-color: #2d2d2d;
+                border: none;
+                width: 12px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #4d4d4d;
+                border-radius: 6px;
+                min-height: 30px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background-color: #5d5d5d;
+            }
+        """)
+        
+        # Create text widget for help content
+        help_text = QTextEdit()
+        help_text.setReadOnly(True)
+        help_text.setFont(self.create_font('label'))
+        help_text.setStyleSheet("""
+            QTextEdit {
+                background-color: #1e1e1e;
+                color: white;
+                border: none;
+                font-family: 'fccTYPO';
+                font-size: 14pt;
+                line-height: 1.6;
+            }
+        """)
+        
+        # Set help content
+        help_content = self.get_help_content()
+        help_text.setHtml(help_content)
+        
+        scroll_area.setWidget(help_text)
+        layout.addWidget(scroll_area)
+    
+    def create_font(self, font_type):
+        """Create font based on configuration"""
+        from PySide6.QtGui import QFont
+        from utils.config import FONT_CONFIG
+        font = QFont(FONT_CONFIG[font_type]['family'])
+        font.setPointSize(FONT_CONFIG[font_type]['size'])
+        if FONT_CONFIG[font_type]['weight'] == 'bold':
+            font.setBold(True)
+        return font
+    
+    def get_help_content(self):
+        """Return comprehensive help content in HTML format"""
+        return """
+        <div style="color: white; background-color: #1e1e1e; padding: 20px; font-family: 'fccTYPO';">
+        
+        <h1 style="color: #ffa500; text-align: center; margin-bottom: 30px;">🚁 B4F: FL1GHT - Complete User Guide</h1>
+        
+        <h2 style="color: #00bfff; border-bottom: 2px solid #00bfff; padding-bottom: 5px;">🎯 Getting Started</h2>
+        
+        <h3 style="color: #ffa500;">📂 Loading Flight Data</h3>
+        <p><strong>1. Select BBL File:</strong> Click the "<span style="color: #00ff00;">Select BBL</span>" button in the Feature Selection panel</p>
+        <p><strong>2. Choose Flight:</strong> If your BBL contains multiple flights, select the desired flight from the dialog</p>
+        <p><strong>3. Select Features:</strong> Check the data types you want to analyze (Gyro, PID terms, Motors, etc.)</p>
+        <p><strong>4. Plot Data:</strong> Click "<span style="color: #00ff00;">Plot</span>" to visualize your selection</p>
+        
+        <h3 style="color: #ffa500;">🔍 Multi-Flight Support</h3>
+        <p>B4F: FL1GHT automatically detects multi-flight BBL files and displays a flight selection dialog with:</p>
+        <ul>
+            <li><strong>Flight Index:</strong> Sequential flight number</li>
+            <li><strong>Duration:</strong> Actual flight time (calculated from time data)</li>
+            <li><strong>Size:</strong> Data size for performance reference</li>
+        </ul>
+        
+        <h2 style="color: #00bfff; border-bottom: 2px solid #00bfff; padding-bottom: 5px;">📊 Analysis Tabs - Detailed Guide</h2>
+        
+        <h3 style="color: #ffa500;">⏱️ Time Domain Analysis</h3>
+        <p><strong>Purpose:</strong> Real-time visualization of flight data over time for behavior analysis.</p>
+        <p><strong>What it shows:</strong></p>
+        <ul>
+            <li><strong>Gyro Data:</strong> Raw and filtered gyroscope readings (deg/s)</li>
+            <li><strong>PID Terms:</strong> P, I, D, and FeedForward controller outputs</li>
+            <li><strong>RC Commands:</strong> Radio control inputs and setpoints</li>
+            <li><strong>Motor Outputs:</strong> ESC signals and motor RPM</li>
+            <li><strong>System Data:</strong> Battery voltage, current, RSSI, flight modes</li>
+        </ul>
+        <p><strong>Controls:</strong></p>
+        <ul>
+            <li><strong>Zoom Slider:</strong> Adjust time range for detailed analysis</li>
+            <li><strong>Scroll Slider:</strong> Navigate through long flight logs</li>
+            <li><strong>Reset Zoom:</strong> Return to full time range</li>
+            <li><strong>Line Width:</strong> Adjust plot thickness for clarity</li>
+        </ul>
+        <p><strong>Use Cases:</strong></p>
+        <ul>
+            <li>Identify oscillations and control issues</li>
+            <li>Analyze flight maneuvers and responses</li>
+            <li>Debug PID tuning problems</li>
+            <li>Monitor system performance and battery health</li>
+        </ul>
+        
+        <h3 style="color: #ffa500;">📈 Frequency Domain Analysis</h3>
+        <p><strong>Purpose:</strong> Power Spectral Density (PSD) analysis for vibration and noise detection.</p>
+        <p><strong>What it shows:</strong></p>
+        <ul>
+            <li><strong>Full Range (0-1000Hz):</strong> Complete frequency spectrum</li>
+            <li><strong>Zoomed View (0-100Hz):</strong> Detailed low-frequency analysis</li>
+            <li><strong>Peak Detection:</strong> Automatic identification of resonant frequencies</li>
+            <li><strong>Noise Floor:</strong> Background noise level assessment</li>
+        </ul>
+        <p><strong>Controls:</strong></p>
+        <ul>
+            <li><strong>Smoothing:</strong> Adjust spectral smoothing (1-10 levels)</li>
+            <li><strong>Multi-Flight:</strong> Compare up to 2 flights simultaneously</li>
+            <li><strong>Interactive Tooltips:</strong> Hover for frequency and power values</li>
+        </ul>
+        <p><strong>Use Cases:</strong></p>
+        <ul>
+            <li>Identify motor and propeller resonances</li>
+            <li>Detect frame vibration issues</li>
+            <li>Evaluate filter effectiveness</li>
+            <li>Compare different propellers or motors</li>
+        </ul>
+        
+        <h3 style="color: #ffa500;">⚡ Step Response Analysis</h3>
+        <p><strong>Purpose:</strong> Analyze control loop response to step inputs for PID tuning validation.</p>
+        <p><strong>What it shows:</strong></p>
+        <ul>
+            <li><strong>Step Detection:</strong> Automatic identification of control inputs</li>
+            <li><strong>Response Metrics:</strong> Rise time, overshoot, settling time</li>
+            <li><strong>PID Values:</strong> Current P, I, D, FF, and D-min settings</li>
+            <li><strong>Annotation Box:</strong> Detailed statistics and recommendations</li>
+        </ul>
+        <p><strong>Controls:</strong></p>
+        <ul>
+            <li><strong>Multi-Flight:</strong> Compare up to 5 flights for tuning evolution</li>
+            <li><strong>Line Width:</strong> Adjust plot thickness</li>
+            <li><strong>Click-to-Expand:</strong> Full-screen analysis</li>
+        </ul>
+        <p><strong>Use Cases:</strong></p>
+        <ul>
+            <li>Validate PID tuning effectiveness</li>
+            <li>Compare different tuning configurations</li>
+            <li>Identify overshoot and oscillation issues</li>
+            <li>Track tuning improvements over time</li>
+        </ul>
+        
+        <h3 style="color: #ffa500;">🔊 Noise Analysis (4-Plot System)</h3>
+        <p><strong>Purpose:</strong> Advanced heatmap visualization of frequency content across all axes and signal types.</p>
+        <p><strong>What it shows:</strong></p>
+        <ul>
+            <li><strong>Gyro (Filtered):</strong> Processed gyroscope data</li>
+            <li><strong>Gyro (Raw):</strong> Unfiltered gyroscope data</li>
+            <li><strong>D-Term (Filtered):</strong> Processed derivative term</li>
+            <li><strong>D-Term (Unfiltered):</strong> Raw derivative term (calculated as derivative of raw gyro × D-gain)</li>
+        </ul>
+        <p><strong>Layout:</strong> 3×4 grid showing Roll, Pitch, Yaw for each signal type</p>
+        <p><strong>Controls:</strong></p>
+        <ul>
+            <li><strong>Gain Adjustment:</strong> Amplify weak signals (1x to 10x)</li>
+            <li><strong>Frequency Range:</strong> Adjustable max frequency (50-1000Hz)</li>
+            <li><strong>Logarithmic Scaling:</strong> Enhanced visibility of weak signals</li>
+            <li><strong>Interactive Tooltips:</strong> Hover for frequency, throttle, and power values</li>
+        </ul>
+        <p><strong>Use Cases:</strong></p>
+        <ul>
+            <li>Compare filtered vs unfiltered signal quality</li>
+            <li>Analyze D-term noise and effectiveness</li>
+            <li>Identify throttle-dependent vibration issues</li>
+            <li>Evaluate filter performance across all axes</li>
+        </ul>
+        
+        <h3 style="color: #ffa500;">🌊 Frequency Evolution (Spectrogram)</h3>
+        <p><strong>Purpose:</strong> Time-frequency analysis showing how frequency content changes during flight.</p>
+        <p><strong>What it shows:</strong></p>
+        <ul>
+            <li><strong>Time-Frequency Heatmap:</strong> Color-coded frequency power over time</li>
+            <li><strong>Frequency Range:</strong> 0-1000Hz with adjustable maximum</li>
+            <li><strong>Time Resolution:</strong> Configurable window size for detail vs overview</li>
+            <li><strong>Gain Control:</strong> Amplify weak signals for better visibility</li>
+        </ul>
+        <p><strong>Controls:</strong></p>
+        <ul>
+            <li><strong>Window Size:</strong> Adjust time-frequency resolution (2^8 to 2^14 samples)</li>
+            <li><strong>Gain Slider:</strong> Amplify weak signals (1x to 10x)</li>
+            <li><strong>Max Frequency:</strong> Adjustable upper frequency limit</li>
+            <li><strong>Interactive Tooltips:</strong> Hover for time, frequency, and power values</li>
+        </ul>
+        <p><strong>Use Cases:</strong></p>
+        <ul>
+            <li>Track frequency changes during maneuvers</li>
+            <li>Identify transient vibration events</li>
+            <li>Analyze motor behavior during different flight phases</li>
+            <li>Detect intermittent mechanical issues</li>
+        </ul>
+        
+        <h3 style="color: #ffa500;">⚠️ Error & Performance Analysis</h3>
+        <p><strong>Purpose:</strong> Comprehensive flight performance evaluation with six different analysis types.</p>
+        
+        <h4 style="color: #00bfff;">📊 Tracking Error Analysis</h4>
+        <p><strong>What it shows:</strong> Difference between setpoint and actual gyro response over time.</p>
+        <p><strong>Use Cases:</strong></p>
+        <ul>
+            <li>Evaluate how well the drone follows commands</li>
+            <li>Identify systematic bias (consistent overshoot/undershoot)</li>
+            <li>Detect oscillation patterns</li>
+            <li>Assess overall control quality</li>
+        </ul>
+        
+        <h4 style="color: #00bfff;">📈 I-Term Analysis</h4>
+        <p><strong>What it shows:</strong> Integral term behavior and saturation detection.</p>
+        <p><strong>Use Cases:</strong></p>
+        <ul>
+            <li>Detect I-term saturation (wind-up)</li>
+            <li>Identify steady-state error compensation</li>
+            <li>Evaluate I-gain effectiveness</li>
+            <li>Monitor integral term stability</li>
+        </ul>
+        
+        <h4 style="color: #00bfff;">⚡ PID Output Analysis</h4>
+        <p><strong>What it shows:</strong> Combined P+I+D controller output with actuator limits.</p>
+        <p><strong>Use Cases:</strong></p>
+        <ul>
+            <li>Monitor total controller effort</li>
+            <li>Detect actuator saturation</li>
+            <li>Evaluate control authority</li>
+            <li>Assess PID balance</li>
+        </ul>
+        
+        <h4 style="color: #00bfff;">🎯 Step Response Analysis</h4>
+        <p><strong>What it shows:</strong> Dual-line visualization of setpoint commands vs actual responses.</p>
+        <p><strong>Use Cases:</strong></p>
+        <ul>
+            <li>Compare command vs response timing</li>
+            <li>Identify lag and delay issues</li>
+            <li>Evaluate step response quality</li>
+            <li>Assess control loop performance</li>
+        </ul>
+        
+        <h4 style="color: #00bfff;">📊 Error Histogram Analysis</h4>
+        <p><strong>What it shows:</strong> Statistical distribution of tracking errors with KDE (Kernel Density Estimation) overlay.</p>
+        <p><strong>Features:</strong></p>
+        <ul>
+            <li><strong>Purple Bars:</strong> Raw histogram showing error frequency</li>
+            <li><strong>Blue Line:</strong> KDE curve showing smoothed probability distribution</li>
+            <li><strong>Zero Reference:</strong> Vertical line at zero error</li>
+            <li><strong>Interactive Tooltips:</strong> Hover for error value, count, and KDE density</li>
+        </ul>
+        <p><strong>Use Cases:</strong></p>
+        <ul>
+            <li>Assess tracking precision (narrow peak = good, wide spread = poor)</li>
+            <li>Detect systematic bias (shifted distribution)</li>
+            <li>Identify oscillation patterns (multiple peaks)</li>
+            <li>Compare different flight modes or configurations</li>
+            <li>Validate PID tuning effectiveness</li>
+        </ul>
+        
+        <h4 style="color: #00bfff;">📈 Cumulative Error Analysis</h4>
+        <p><strong>What it shows:</strong> Running sum of tracking errors over time.</p>
+        <p><strong>Use Cases:</strong></p>
+        <ul>
+            <li>Track error accumulation trends</li>
+            <li>Identify persistent control issues</li>
+            <li>Evaluate long-term performance</li>
+            <li>Compare different flight segments</li>
+        </ul>
+        
+        <h3 style="color: #ffa500;">⚙️ Drone Configuration Analysis</h3>
+        <p><strong>Purpose:</strong> View and compare Betaflight configuration parameters from BBL headers.</p>
+        <p><strong>What it shows:</strong></p>
+        <ul>
+            <li><strong>Complete Parameter Table:</strong> All Betaflight settings from the BBL file</li>
+            <li><strong>Organized Sections:</strong> PID, RC, TPA, D, I, Anti-gravity, Feed Forward, etc.</li>
+            <li><strong>Multi-Log Comparison:</strong> Side-by-side parameter comparison</li>
+            <li><strong>Difference Highlighting:</strong> Visual indication of parameter changes</li>
+        </ul>
+        <p><strong>Controls:</strong></p>
+        <ul>
+            <li><strong>Highlight Differences:</strong> Toggle to show only changed parameters</li>
+            <li><strong>Show Only Differences:</strong> Filter to display only modified settings</li>
+            <li><strong>Color Coding:</strong> Green for log 1, blue for log 2, highlighting for differences</li>
+        </ul>
+        <p><strong>Use Cases:</strong></p>
+        <ul>
+            <li>Document current drone configuration</li>
+            <li>Compare different tuning setups</li>
+            <li>Track configuration changes over time</li>
+            <li>Share and backup drone settings</li>
+        </ul>
+        
+        <h3 style="color: #ffa500;">💾 Export System</h3>
+        <p><strong>Purpose:</strong> High-quality plot export for documentation and sharing.</p>
+        <p><strong>Features:</strong></p>
+        <ul>
+            <li><strong>Quality:</strong> 1200 DPI JPEG with antialiasing for publication-ready output</li>
+            <li><strong>Layout:</strong> Stacked charts with detailed headers and timestamps</li>
+            <li><strong>Naming:</strong> Configurable drone names with timestamped filenames</li>
+            <li><strong>Coverage:</strong> All analysis tabs supported (Time Domain, Frequency, Step Response, etc.)</li>
+            <li><strong>Organization:</strong> Automatic folder creation with categorized exports</li>
+        </ul>
+        <p><strong>Export Options:</strong></p>
+        <ul>
+            <li><strong>Author Name:</strong> Customizable attribution</li>
+            <li><strong>Drone Name:</strong> Configurable drone identifier</li>
+            <li><strong>Export Directory:</strong> User-selectable output location</li>
+            <li><strong>Filename Format:</strong> Timestamped with drone name integration</li>
+        </ul>
+        
+        <h2 style="color: #00bfff; border-bottom: 2px solid #00bfff; padding-bottom: 5px;">🎮 Navigation & Controls</h2>
+        
+        <h3 style="color: #ffa500;">🖱️ Chart Interactions</h3>
+        <ul>
+            <li><strong>Click-to-Expand:</strong> Click any chart to expand it to full screen for detailed analysis</li>
+            <li><strong>Second Click:</strong> Click again to restore original layout with equal heights</li>
+            <li><strong>Interactive Tooltips:</strong> Hover over charts for detailed data values</li>
+            <li><strong>Crosshair Lines:</strong> Vertical lines appear on hover for precise data reading</li>
+            <li><strong>Zoom & Pan:</strong> Available in expanded chart mode</li>
+        </ul>
+        
+        <h3 style="color: #ffa500;">🎛️ Control Panel Features</h3>
+        <ul>
+            <li><strong>Line Width Slider:</strong> Adjust plot thickness (1-10 pixels) for better visibility</li>
+            <li><strong>Feature Selection:</strong> Check/uncheck data types to show/hide in plots</li>
+            <li><strong>Multi-Flight Support:</strong> Select multiple logs for comparison in supported tabs</li>
+            <li><strong>Settings Dialog:</strong> Configure export directory, drone name, and author</li>
+        </ul>
+        
+        <h3 style="color: #ffa500;">📋 Data Selection</h3>
+        <ul>
+            <li><strong>Gyro Data:</strong> Raw and filtered gyroscope readings</li>
+            <li><strong>PID Terms:</strong> Proportional, Integral, Derivative, and FeedForward outputs</li>
+            <li><strong>RC Commands:</strong> Radio control inputs and setpoints</li>
+            <li><strong>Motor Data:</strong> ESC signals and motor RPM</li>
+            <li><strong>System Info:</strong> Battery voltage, current, RSSI, flight modes</li>
+        </ul>
+        
+        <h2 style="color: #00bfff; border-bottom: 2px solid #00bfff; padding-bottom: 5px;">🔧 Advanced Features</h2>
+        
+        <h3 style="color: #ffa500;">📊 Statistical Analysis</h3>
+        <ul>
+            <li><strong>Error Distribution:</strong> Histogram analysis with KDE for tracking precision</li>
+            <li><strong>Peak Detection:</strong> Automatic identification of resonant frequencies</li>
+            <li><strong>Outlier Filtering:</strong> Statistical removal of extreme values for cleaner analysis</li>
+            <li><strong>Global Scaling:</strong> Consistent histogram ranges across all axes</li>
+        </ul>
+        
+        <h3 style="color: #ffa500;">🎯 PID Tuning Support</h3>
+        <ul>
+            <li><strong>Step Response Metrics:</strong> Rise time, overshoot, settling time calculations</li>
+            <li><strong>I-Term Saturation Detection:</strong> Identify integral wind-up issues</li>
+            <li><strong>D-Term Analysis:</strong> Evaluate derivative term effectiveness and noise</li>
+            <li><strong>Multi-Flight Comparison:</strong> Track tuning improvements over time</li>
+        </ul>
+        
+        <h3 style="color: #ffa500;">🔍 Vibration Analysis</h3>
+        <ul>
+            <li><strong>Frequency Domain:</strong> Identify motor and propeller resonances</li>
+            <li><strong>Throttle-Dependent Analysis:</strong> 2D histograms showing vibration vs throttle</li>
+            <li><strong>Filter Performance:</strong> Compare filtered vs unfiltered signal quality</li>
+            <li><strong>Time-Frequency Analysis:</strong> Track vibration changes during flight</li>
+        </ul>
+        
+        <h3 style="color: #ffa500;">⚙️ Configuration Management</h3>
+        <ul>
+            <li><strong>Parameter Extraction:</strong> Automatic parsing of Betaflight settings from BBL headers</li>
+            <li><strong>Side-by-Side Comparison:</strong> Compare configurations between different logs</li>
+            <li><strong>Difference Highlighting:</strong> Visual indication of parameter changes</li>
+            <li><strong>Export Support:</strong> Save configuration data for backup and sharing</li>
+        </ul>
+        
+        <h2 style="color: #00bfff; border-bottom: 2px solid #00bfff; padding-bottom: 5px;">💡 Tips & Best Practices</h2>
+        
+        <h3 style="color: #ffa500;">🎯 For PID Tuning</h3>
+        <ul>
+            <li><strong>Start with Step Response:</strong> Use this tab to validate your PID changes</li>
+            <li><strong>Check Error Histogram:</strong> Narrow peaks near zero indicate good tuning</li>
+            <li><strong>Monitor I-Term:</strong> Watch for saturation in the Error & Performance tab</li>
+            <li><strong>Compare Before/After:</strong> Use multi-flight comparison to track improvements</li>
+        </ul>
+        
+        <h3 style="color: #ffa500;">🔍 For Vibration Analysis</h3>
+        <ul>
+            <li><strong>Use Frequency Domain:</strong> Start here to identify resonant frequencies</li>
+            <li><strong>Check Noise Analysis:</strong> Compare filtered vs unfiltered signals</li>
+            <li><strong>Look for Throttle Dependence:</strong> Use 2D histograms to see vibration patterns</li>
+            <li><strong>Monitor Over Time:</strong> Use spectrograms to track vibration changes</li>
+        </ul>
+        
+        <h3 style="color: #ffa500;">📊 For Performance Analysis</h3>
+        <ul>
+            <li><strong>Use Error Histogram:</strong> Best tool for overall performance assessment</li>
+            <li><strong>Check Multiple Axes:</strong> Compare Roll, Pitch, and Yaw performance</li>
+            <li><strong>Monitor System Health:</strong> Watch battery voltage and motor behavior</li>
+            <li><strong>Export for Documentation:</strong> Save plots for tuning records</li>
+        </ul>
+        
+        <h2 style="color: #00bfff; border-bottom: 2px solid #00bfff; padding-bottom: 5px;">🚨 Troubleshooting</h2>
+        
+        <h3 style="color: #ffa500;">❓ Common Issues</h3>
+        <ul>
+            <li><strong>No Data Displayed:</strong> Check that you've selected data types in the Feature Selection panel</li>
+            <li><strong>Missing Plots:</strong> Ensure your BBL file contains the required data columns</li>
+            <li><strong>Slow Performance:</strong> Try reducing line width or smoothing settings</li>
+            <li><strong>Export Failures:</strong> Check that the export directory is writable</li>
+        </ul>
+        
+        <h3 style="color: #ffa500;">🔧 Debug Features</h3>
+        <ul>
+            <li><strong>Verbose Logging:</strong> Enable in settings for detailed console output</li>
+            <li><strong>Missing Data Warnings:</strong> Check console for data availability messages</li>
+            <li><strong>Error Messages:</strong> Look for specific error descriptions in the console</li>
+        </ul>
+        
+        <h2 style="color: #00bfff; border-bottom: 2px solid #00bfff; padding-bottom: 5px;">📚 Technical Details</h2>
+        
+        <h3 style="color: #ffa500;">🔬 Analysis Methods</h3>
+        <ul>
+            <li><strong>FFT Analysis:</strong> Fast Fourier Transform for frequency domain analysis</li>
+            <li><strong>KDE Estimation:</strong> Kernel Density Estimation for statistical analysis</li>
+            <li><strong>2D Histograms:</strong> Throttle-dependent vibration analysis</li>
+            <li><strong>Step Detection:</strong> Automatic identification of control inputs</li>
+        </ul>
+        
+        <h3 style="color: #ffa500;">📊 Data Processing</h3>
+        <ul>
+            <li><strong>Time Normalization:</strong> Automatic conversion to seconds</li>
+            <li><strong>Outlier Filtering:</strong> Statistical removal of extreme values</li>
+            <li><strong>Signal Smoothing:</strong> Configurable spectral smoothing</li>
+            <li><strong>Gain Adjustment:</strong> Amplification of weak signals</li>
+        </ul>
+        
+        <h3 style="color: #ffa500;">🎨 Visualization Features</h3>
+        <ul>
+            <li><strong>High-Quality Rendering:</strong> 1200 DPI export with antialiasing</li>
+            <li><strong>Interactive Charts:</strong> Qt-based responsive visualizations</li>
+            <li><strong>Color Coding:</strong> Consistent color schemes across all plots</li>
+            <li><strong>Responsive Layout:</strong> Automatic resizing and positioning</li>
+        </ul>
+        
+        <h2 style="color: #00bfff; border-bottom: 2px solid #00bfff; padding-bottom: 5px;">📞 Support & Resources</h2>
+        
+        <p><strong>For additional support:</strong></p>
+        <ul>
+            <li>Check the console output for detailed error messages</li>
+            <li>Enable verbose logging in settings for debugging</li>
+            <li>Ensure your BBL files are from supported Betaflight versions</li>
+            <li>Verify that the blackbox_decode tool is properly installed</li>
+        </ul>
+        
+        <p style="text-align: center; margin-top: 30px; color: #ffa500;">
+        <strong>🚁 Happy Flying with B4F: FL1GHT! 🚁</strong>
+        </p>
+        
+        </div>
+        """

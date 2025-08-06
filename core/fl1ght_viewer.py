@@ -11,12 +11,12 @@ import tempfile
 import numpy as np
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QMessageBox, QSizePolicy,
-    QFileDialog, QTabWidget, QDialog, QListWidget, QListWidgetItem, QDialogButtonBox, QLabel
+    QFileDialog, QTabWidget, QDialog, QListWidget, QListWidgetItem, QDialogButtonBox, QLabel, QApplication
 )
 from PySide6.QtGui import QFont, QPainter
-from PySide6.QtCore import Qt, QMargins
+from PySide6.QtCore import Qt, QMargins, QTimer
 from PySide6.QtCharts import QChart
-from ui.widgets import FeatureSelectionWidget, ControlWidget, SpectralAnalyzerWidget, StepResponseWidget, FrequencyAnalyzerWidget, PlotExportWidget, ParametersWidget, SpectrogramWidget, ErrorPerformanceWidget
+from ui.widgets import FeatureSelectionWidget, ControlWidget, SpectralAnalyzerWidget, StepResponseWidget, FrequencyAnalyzerWidget, PlotExportWidget, ParametersWidget, SpectrogramWidget, ErrorPerformanceWidget, HelpWidget
 from .chart_manager import ChartManager
 from utils.data_processor import normalize_time_data, get_clean_name, decimate_data
 from utils.config import FONT_CONFIG
@@ -118,6 +118,9 @@ class FL1GHTViewer(QWidget):
         # Export tab
         self.export_widget = PlotExportWidget()
         
+        # Help tab
+        self.help_widget = HelpWidget()
+        
         # Add tabs
         self.tab_widget.addTab(time_domain_widget, "Time Domain")
         self.tab_widget.addTab(self.spectral_widget, "Frequency Domain")
@@ -127,6 +130,7 @@ class FL1GHTViewer(QWidget):
         self.tab_widget.addTab(self.error_performance_widget, "Error && Performance")
         self.tab_widget.addTab(self.parameters_widget, "Drone Config")
         self.tab_widget.addTab(self.export_widget, "Export Plots")
+        self.tab_widget.addTab(self.help_widget, "Help")
         
         right_layout.addWidget(self.tab_widget)
         main_layout.addWidget(right_widget, stretch=1)
@@ -208,6 +212,94 @@ class FL1GHTViewer(QWidget):
             print(f"[DEBUG] Found {len(flights)} flights")
         return flights if flights else None
 
+    def get_actual_flight_duration(self, file_path, flight_index):
+        """Get actual flight duration by decoding the specific flight and reading time data."""
+        try:
+            if self.feature_widget.debug('VERBOSE'):
+                print(f"[DEBUG] Getting actual duration for flight {flight_index} from {file_path}")
+            
+            # Decode the specific flight with shorter timeout for faster loading
+            result = subprocess.run([
+                self.blackbox_decode_path,
+                '--stdout',
+                '--unit-rotation', 'deg/s',
+                '--index', str(flight_index),
+                file_path
+            ], capture_output=True, text=True, timeout=10)  # Reduced timeout for faster loading
+            
+            if result.returncode != 0:
+                if self.feature_widget.debug('VERBOSE'):
+                    print(f"[DEBUG] Decoder failed for flight {flight_index}: {result.stderr}")
+                return None
+            
+            # Parse the CSV data to get time information
+            lines = result.stdout.strip().split('\n')
+            if self.feature_widget.debug('VERBOSE'):
+                print(f"[DEBUG] Flight {flight_index}: Got {len(lines)} lines from decoder")
+            
+            if len(lines) < 2:  # Need header + at least one data row
+                if self.feature_widget.debug('VERBOSE'):
+                    print(f"[DEBUG] Flight {flight_index}: Not enough lines ({len(lines)})")
+                return None
+            
+            # Find time column
+            header = lines[0].split(',')
+            if self.feature_widget.debug('VERBOSE'):
+                print(f"[DEBUG] Flight {flight_index}: Header columns: {header}")
+            
+            time_col_idx = None
+            for i, col in enumerate(header):
+                if 'time' in col.lower():
+                    time_col_idx = i
+                    break
+            
+            if time_col_idx is None:
+                if self.feature_widget.debug('VERBOSE'):
+                    print(f"[DEBUG] Flight {flight_index}: No time column found in header")
+                return None
+            
+            # Get first and last time values
+            data_lines = [line for line in lines[1:] if line.strip()]
+            if len(data_lines) < 1:
+                return None
+            
+            first_line = data_lines[0].split(',')
+            last_line = data_lines[-1].split(',')
+            
+            if len(first_line) <= time_col_idx or len(last_line) <= time_col_idx:
+                return None
+            
+            try:
+                first_time = float(first_line[time_col_idx])
+                last_time = float(last_line[time_col_idx])
+                
+                if self.feature_widget.debug('VERBOSE'):
+                    print(f"[DEBUG] Flight {flight_index}: First time: {first_time}, Last time: {last_time}")
+                
+                # Calculate duration in seconds
+                duration_seconds = (last_time - first_time) / 1_000_000.0  # Convert from microseconds
+                
+                if self.feature_widget.debug('VERBOSE'):
+                    print(f"[DEBUG] Flight {flight_index}: Duration: {duration_seconds:.3f} seconds")
+                
+                # Format duration
+                if duration_seconds < 60:
+                    return f"{duration_seconds:.1f}s"
+                else:
+                    minutes = int(duration_seconds // 60)
+                    seconds = duration_seconds % 60
+                    return f"{minutes}:{seconds:05.1f}"
+                    
+            except (ValueError, IndexError) as e:
+                if self.feature_widget.debug('VERBOSE'):
+                    print(f"[DEBUG] Flight {flight_index}: Error parsing time values: {e}")
+                return None
+                
+        except Exception as e:
+            if self.feature_widget.debug('VERBOSE'):
+                print(f"[DEBUG] Error getting actual duration for flight {flight_index}: {e}")
+            return None
+
     def estimate_flight_duration(self, flight_size):
         """Estimate flight duration in minutes based on flight data size.
         
@@ -235,7 +327,7 @@ class FL1GHTViewer(QWidget):
         else:
             return f"{minutes_int} min"
 
-    def show_flight_selection_dialog(self, filename, flights):
+    def show_flight_selection_dialog(self, filename, flights, file_path):
         """Show a dialog to select which flight to load and return the selected index."""
         if not flights:
             return None
@@ -285,15 +377,53 @@ class FL1GHTViewer(QWidget):
         list_widget = QListWidget()
         list_widget.setFont(font)
         list_widget.setSelectionMode(QListWidget.MultiSelection)  # Allow multiple selection
-        for flight in flights:
-            # Calculate approximate duration
-            duration = self.estimate_flight_duration(flight['size'])
+        
+        # Show loading message with progress
+        loading_label = QLabel("Loading flight durations...")
+        loading_label.setFont(font)
+        layout.addWidget(loading_label)
+        
+        # Track if we got any actual durations
+        got_actual_durations = False
+        
+        for i, flight in enumerate(flights):
+            # Update loading message with progress
+            loading_label.setText(f"Loading flight durations... ({i+1}/{len(flights)})")
+            QApplication.processEvents()  # Update UI
+            
+            print(f"[DEBUG] Processing flight {flight['index']}...")  # Simple debug print
+            
+            # Get actual duration by decoding the flight
+            actual_duration = self.get_actual_flight_duration(file_path, flight['index'])
+            print(f"[DEBUG] Flight {flight['index']}: actual_duration = {actual_duration}")
+            if actual_duration is None:
+                # Fallback to estimated duration if actual duration couldn't be determined
+                estimated_duration = self.estimate_flight_duration(flight['size'])
+                duration_display = f"~{estimated_duration} (estimated)"
+            else:
+                duration_display = actual_duration
+                got_actual_durations = True
+            
             size_mb = flight['size'] / (1024 * 1024)  # Convert to MB
             
             # Create item with duration and size information
-            item = QListWidgetItem(f"Flight {flight['index']} - Duration: {duration} (Size: {size_mb:.1f} MB)")
+            item = QListWidgetItem(f"Flight {flight['index']} - Duration: {duration_display} (Size: {size_mb:.1f} MB)")
             item.setData(Qt.UserRole, flight['index'])
             list_widget.addItem(item)
+        
+        # Show success message if we got actual durations
+        if got_actual_durations:
+            loading_label.setText("✓ Flight durations loaded successfully!")
+            loading_label.setStyleSheet("color: #00ff00; font-weight: bold;")  # Green color for success
+        else:
+            loading_label.setText("⚠ Using estimated durations (actual durations unavailable)")
+            loading_label.setStyleSheet("color: #ffaa00; font-weight: bold;")  # Orange color for warning
+        
+        # Small delay to ensure UI updates
+        QApplication.processEvents()
+        
+        # Keep the message visible for a moment before removing
+        QTimer.singleShot(2000, lambda: self._remove_loading_label(loading_label, layout))
         
         # Select the first item by default
         if list_widget.count() > 0:
@@ -353,6 +483,14 @@ class FL1GHTViewer(QWidget):
             return selected_indices
         
         return None
+
+    def _remove_loading_label(self, loading_label, layout):
+        """Helper method to remove the loading label after a delay"""
+        try:
+            layout.removeWidget(loading_label)
+            loading_label.deleteLater()
+        except Exception:
+            pass  # Ignore errors if widget is already removed
 
     def load_bbl(self):
         """Load BBL file(s) and convert to CSV."""
@@ -416,10 +554,15 @@ class FL1GHTViewer(QWidget):
                         print(f"[DEBUG] Could not parse PID from .bbl: {e}")
                 
                 # Get the path to the blackbox decoder tool
-                decoder_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "tools", "blackbox_decode")
+                self.blackbox_decode_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "tools", "blackbox_decode")
+                
+                # Check if the blackbox decoder exists
+                if not os.path.exists(self.blackbox_decode_path):
+                    QMessageBox.critical(self, "Error", f"Blackbox decoder not found at {self.blackbox_decode_path}")
+                    continue
                 
                 # First try to run the decoder without an index to see if it contains multiple flights
-                initial_cmd = [decoder_path, '--stdout', '--unit-rotation', 'deg/s', file_path]
+                initial_cmd = [self.blackbox_decode_path, '--stdout', '--unit-rotation', 'deg/s', file_path]
                 if getattr(self.feature_widget, 'debug_verbose', False):
                     print(f"[DEBUG] Running initial decoder command: {' '.join(initial_cmd)}")
                 
@@ -446,7 +589,7 @@ class FL1GHTViewer(QWidget):
                         continue
                     
                     # Show dialog to select which flight(s) to load
-                    selected_indices = self.show_flight_selection_dialog(filename, flights)
+                    selected_indices = self.show_flight_selection_dialog(filename, flights, file_path)
                     
                     if not selected_indices:
                         # User canceled, skip this file
@@ -466,7 +609,7 @@ class FL1GHTViewer(QWidget):
                             continue
                         
                         # Now run the decoder with the selected index
-                        decoder_cmd = [decoder_path, '--stdout', '--unit-rotation', 'deg/s', '--index', str(selected_index), file_path]
+                        decoder_cmd = [self.blackbox_decode_path, '--stdout', '--unit-rotation', 'deg/s', '--index', str(selected_index), file_path]
                         if getattr(self.feature_widget, 'debug_verbose', False):
                             print(f"[DEBUG] Running decoder with index {selected_index}: {' '.join(decoder_cmd)}")
                         
@@ -996,8 +1139,8 @@ class FL1GHTViewer(QWidget):
         # Store the previous tab index before any logic
         prev_tab = self.previous_tab_index
         self.previous_tab_index = index
-        # 0 = Time Domain, 1 = Frequency Domain, 2 = Step Response, 3 = Noise Analysis, 4 = Frequency Evolution, 5 = Error & Performance, 6 = Drone Config, 7 = Export
-        if index == 7:  # Export tab (was 6, now 7)
+        # 0 = Time Domain, 1 = Frequency Domain, 2 = Step Response, 3 = Noise Analysis, 4 = Frequency Evolution, 5 = Drone Config, 6 = Export
+        if index == 7:  # Export tab
             # Only export if we're coming from a valid tab (0-5)
             if 0 <= prev_tab <= 5:
                 self.export_widget.set_previous_tab(prev_tab)
@@ -1094,6 +1237,9 @@ class FL1GHTViewer(QWidget):
             # Allow up to 2 logs to be selected in Drone Config tab
             self.feature_widget.logs_list.setSelectionMode(QListWidget.ExtendedSelection)
             self.feature_widget.legend_group.setVisible(False)
+        elif index == 8:  # Help tab
+            # Help tab doesn't require any special setup - just viewing documentation
+            pass
 
     def plot_multiple_logs(self):
         """Plot multiple selected logs together"""

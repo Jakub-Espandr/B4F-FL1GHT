@@ -22,6 +22,54 @@ def spectrum(time, traces):
     trfreq = np.fft.rfftfreq(len(traces[0]), time[1] - time[0])
     return trfreq, trspec
 
+def compute_unfiltered_dterm(gyro_unfilt, time, d_gain):
+    """Compute unfiltered D-term as derivative of raw gyro × D-gain"""
+    if len(gyro_unfilt) < 2:
+        return np.zeros_like(gyro_unfilt)
+    
+    # Compute derivative using finite differences
+    dt = time[1] - time[0] if len(time) > 1 else 1.0
+    derivative = np.gradient(gyro_unfilt, dt)
+    
+    # Apply D-gain
+    unfiltered_dterm = derivative * d_gain
+    
+    return unfiltered_dterm
+
+def get_d_gain(df, axis_idx):
+    """Extract D-gain for a specific axis from the DataFrame"""
+    axis_names = ['roll', 'pitch', 'yaw']
+    axis_name = axis_names[axis_idx]
+    
+    # Try to get D-gain from PID columns
+    pid_col = None
+    for pattern in [f'{axis_name}PID', f'{axis_name.upper()}PID', f'{axis_name[0]}PID']:
+        if pattern in df.columns:
+            pid_col = pattern
+            break
+    
+    if pid_col and pid_col in df.columns:
+        try:
+            pid_val = df[pid_col].iloc[0]
+            if pid_val and pid_val != 'N/A':
+                # Parse PID values: "P,I,D" format
+                p, i, d = map(float, str(pid_val).split(','))
+                return d
+        except Exception as e:
+            logging.warning(f"Failed to parse PID values from {pid_col}: {e}")
+    
+    # Fallback: try to get from DMin column
+    dmin_col = f'{axis_name}DMin'
+    if dmin_col in df.columns:
+        try:
+            return float(df[dmin_col].iloc[0])
+        except Exception as e:
+            logging.warning(f"Failed to get D-gain from {dmin_col}: {e}")
+    
+    # Default D-gain
+    logging.warning(f"No D-gain found for {axis_name}, using default value 20")
+    return 20.0
+
 def process_gyro_data(time, gyro, throttle, name="", gain=1.0):
     """Process gyro data for a single axis (roll/pitch/yaw)"""
     # Windowing parameters (same as PID-Analyzer)
@@ -143,7 +191,7 @@ def create_2d_histogram(x, y, weights, bins):
     }
 
 def plot_noise_from_df(df, max_freq=1000, gain=1.0):
-    """Create PID-Analyzer style noise plot from DataFrame"""
+    """Create PID-Analyzer style noise plot from DataFrame with 4 plots per axis"""
     logging.info(f"Starting plot_noise_from_df with DataFrame shape: {df.shape}, gain={gain}")
     
     # Prepare time data
@@ -172,9 +220,11 @@ def plot_noise_from_df(df, max_freq=1000, gain=1.0):
     else:
         throttle = throttle.clip(0, 100)
     
-    # Find gyro and debug columns
+    # Find gyro, debug, dterm, and compute unfiltered dterm
     gyro_data = []
     debug_data = []
+    dterm_data = []
+    unfiltered_dterm_data = []
     
     for axis_idx, axis_name in enumerate(['roll', 'pitch', 'yaw']):
         # Try to find gyro column
@@ -184,12 +234,15 @@ def plot_noise_from_df(df, max_freq=1000, gain=1.0):
                 gyro_col = pattern
                 break
         
-        # Try to find debug column
+        # Try to find debug column (raw gyro data)
         debug_col = None
-        for pattern in [f'debug[{axis_idx}]', f'debug{axis_idx}']:
+        for pattern in [f'gyroUnfilt[{axis_idx}]', f'debug[{axis_idx}]', f'debug{axis_idx}']:
             if pattern in df.columns:
                 debug_col = pattern
                 break
+        
+        # Try to find D-term column
+        dterm_col = f'axisD[{axis_idx}]'
         
         if gyro_col:
             gyro = df[gyro_col].values.astype(float)
@@ -203,25 +256,43 @@ def plot_noise_from_df(df, max_freq=1000, gain=1.0):
             logging.warning(f"No debug column found for {axis_name}")
             debug = np.zeros_like(time)
         
+        if dterm_col in df.columns:
+            dterm = df[dterm_col].values.astype(float)
+        else:
+            logging.warning(f"No D-term column found for {axis_name}")
+            dterm = np.zeros_like(time)
+        
+        # Compute unfiltered D-term
+        d_gain = get_d_gain(df, axis_idx)
+        unfiltered_dterm = compute_unfiltered_dterm(debug, time, d_gain)
+        
         # Process data with gain
         gyro_result = process_gyro_data(time, gyro, throttle, name=f"gyro {axis_name}", gain=gain)
         debug_result = process_gyro_data(time, debug, throttle, name=f"debug {axis_name}", gain=gain)
+        dterm_result = process_gyro_data(time, dterm, throttle, name=f"dterm {axis_name}", gain=gain)
+        unfiltered_dterm_result = process_gyro_data(time, unfiltered_dterm, throttle, name=f"unfiltered dterm {axis_name}", gain=gain)
         
         if gyro_result is not None:
             gyro_data.append((axis_name, gyro_result))
         if debug_result is not None:
             debug_data.append((axis_name, debug_result))
+        if dterm_result is not None:
+            dterm_data.append((axis_name, dterm_result))
+        if unfiltered_dterm_result is not None:
+            unfiltered_dterm_data.append((axis_name, unfiltered_dterm_result))
     
-    # Create figure with GridSpec
-    fig = plt.figure(figsize=(40, 32))
+    # Create figure with GridSpec for 4 plots per axis
+    fig = plt.figure(figsize=(50, 32))
     fig.patch.set_facecolor('white')
-    gs = gridspec.GridSpec(3, 3, wspace=0.01, hspace=0.01)
+    gs = gridspec.GridSpec(3, 4, wspace=0.01, hspace=0.01)
     
-    # Create colorbars
-    cax_gyro = fig.add_subplot(gs[0, 0:7])
-    cax_debug = fig.add_subplot(gs[0, 8:15])
+    # Create colorbars for each plot type
+    cax_gyro = fig.add_subplot(gs[0, 0:1])
+    cax_debug = fig.add_subplot(gs[0, 1:2])
+    cax_dterm = fig.add_subplot(gs[0, 2:3])
+    cax_unfiltered_dterm = fig.add_subplot(gs[0, 3:4])
     
-    # Calculate color normalization
+    # Calculate color normalization for each plot type
     if gyro_data:
         vmin_gyro = 1
         vmax_gyro = max(data[1]['max'] for data in gyro_data) + 1
@@ -234,10 +305,28 @@ def plot_noise_from_df(df, max_freq=1000, gain=1.0):
     else:
         vmin_debug, vmax_debug = 1, 10
     
+    if dterm_data:
+        vmin_dterm = 1
+        vmax_dterm = max(data[1]['max'] for data in dterm_data) + 1
+    else:
+        vmin_dterm, vmax_dterm = 1, 10
+    
+    if unfiltered_dterm_data:
+        vmin_unfiltered_dterm = 1
+        vmax_unfiltered_dterm = max(data[1]['max'] for data in unfiltered_dterm_data) + 1
+    else:
+        vmin_unfiltered_dterm, vmax_unfiltered_dterm = 1, 10
+    
     # Plot each axis
-    for i, ((axis_name, gyro_result), (_, debug_result)) in enumerate(zip(gyro_data, debug_data)):
-        # Gyro plot
-        ax_gyro = fig.add_subplot(gs[1+i*8:1+i*8+8, 0:7])
+    for i in range(len(gyro_data)):
+        axis_name = gyro_data[i][0]
+        gyro_result = gyro_data[i][1]
+        debug_result = debug_data[i][1]
+        dterm_result = dterm_data[i][1] if i < len(dterm_data) else None
+        unfiltered_dterm_result = unfiltered_dterm_data[i][1] if i < len(unfiltered_dterm_data) else None
+        
+        # Gyro plot (filtered)
+        ax_gyro = fig.add_subplot(gs[1+i*8:1+i*8+8, 0:1])
         ax_gyro.set_facecolor('black')
         
         # Plot gyro data
@@ -266,8 +355,8 @@ def plot_noise_from_df(df, max_freq=1000, gain=1.0):
         else:
             ax_gyro.set_xticklabels([])
         
-        # Debug plot
-        ax_debug = fig.add_subplot(gs[1+i*8:1+i*8+8, 8:15])
+        # Debug plot (unfiltered gyro)
+        ax_debug = fig.add_subplot(gs[1+i*8:1+i*8+8, 1:2])
         ax_debug.set_facecolor('black')
         
         # Plot debug data
@@ -295,8 +384,70 @@ def plot_noise_from_df(df, max_freq=1000, gain=1.0):
             ax_debug.set_xlabel('throttle in %', color='white')
         else:
             ax_debug.set_xticklabels([])
+        
+        # D-term plot (filtered)
+        if dterm_result is not None:
+            ax_dterm = fig.add_subplot(gs[1+i*8:1+i*8+8, 2:3])
+            ax_dterm.set_facecolor('black')
+            
+            # Plot dterm data
+            pc_dterm = ax_dterm.pcolormesh(
+                dterm_result['throt_axis'], 
+                dterm_result['freq_axis'], 
+                dterm_result['hist2d_sm'] + 1e-6,
+                norm=colors.LogNorm(vmin=vmin_dterm, vmax=vmax_dterm),
+                cmap='inferno'
+            )
+            
+            # Style the dterm plot
+            ax_dterm.set_ylabel('frequency in Hz', color='white')
+            ax_dterm.set_ylim(0, max_freq)
+            ax_dterm.grid(True, color='white', alpha=0.3, linestyle='-')
+            
+            # Set tick colors
+            ax_dterm.tick_params(axis='x', colors='white')
+            ax_dterm.tick_params(axis='y', colors='white')
+            for spine in ax_dterm.spines.values():
+                spine.set_color('white')
+            
+            # Only show x label on bottom plot
+            if i == len(dterm_data)-1:
+                ax_dterm.set_xlabel('throttle in %', color='white')
+            else:
+                ax_dterm.set_xticklabels([])
+        
+        # Unfiltered D-term plot
+        if unfiltered_dterm_result is not None:
+            ax_unfiltered_dterm = fig.add_subplot(gs[1+i*8:1+i*8+8, 3:4])
+            ax_unfiltered_dterm.set_facecolor('black')
+            
+            # Plot unfiltered dterm data
+            pc_unfiltered_dterm = ax_unfiltered_dterm.pcolormesh(
+                unfiltered_dterm_result['throt_axis'], 
+                unfiltered_dterm_result['freq_axis'], 
+                unfiltered_dterm_result['hist2d_sm'] + 1e-6,
+                norm=colors.LogNorm(vmin=vmin_unfiltered_dterm, vmax=vmax_unfiltered_dterm),
+                cmap='inferno'
+            )
+            
+            # Style the unfiltered dterm plot
+            ax_unfiltered_dterm.set_ylabel('frequency in Hz', color='white')
+            ax_unfiltered_dterm.set_ylim(0, max_freq)
+            ax_unfiltered_dterm.grid(True, color='white', alpha=0.3, linestyle='-')
+            
+            # Set tick colors
+            ax_unfiltered_dterm.tick_params(axis='x', colors='white')
+            ax_unfiltered_dterm.tick_params(axis='y', colors='white')
+            for spine in ax_unfiltered_dterm.spines.values():
+                spine.set_color('white')
+            
+            # Only show x label on bottom plot
+            if i == len(unfiltered_dterm_data)-1:
+                ax_unfiltered_dterm.set_xlabel('throttle in %', color='white')
+            else:
+                ax_unfiltered_dterm.set_xticklabels([])
     
-    # Add colorbars
+    # Add colorbars for all plot types
     if gyro_data:
         cb_gyro = fig.colorbar(pc_gyro, cax=cax_gyro, orientation='horizontal')
         cb_gyro.ax.xaxis.set_ticks_position('top')
@@ -325,9 +476,37 @@ def plot_noise_from_df(df, max_freq=1000, gain=1.0):
         for spine in cb_debug.ax.spines.values():
             spine.set_visible(False)
     
+    if dterm_data and 'pc_dterm' in locals():
+        cb_dterm = fig.colorbar(pc_dterm, cax=cax_dterm, orientation='horizontal')
+        cb_dterm.ax.xaxis.set_ticks_position('top')
+        cb_dterm.ax.tick_params(colors='black', labelcolor='black')
+        
+        # Remove ticks and labels
+        cb_dterm.ax.set_xticks([])
+        cb_dterm.ax.set_xticklabels([])
+        cb_dterm.ax.tick_params(axis='x', bottom=False, top=False)
+        
+        # Remove all spines (borders) around the colorbar
+        for spine in cb_dterm.ax.spines.values():
+            spine.set_visible(False)
+    
+    if unfiltered_dterm_data and 'pc_unfiltered_dterm' in locals():
+        cb_unfiltered_dterm = fig.colorbar(pc_unfiltered_dterm, cax=cax_unfiltered_dterm, orientation='horizontal')
+        cb_unfiltered_dterm.ax.xaxis.set_ticks_position('top')
+        cb_unfiltered_dterm.ax.tick_params(colors='black', labelcolor='black')
+        
+        # Remove ticks and labels
+        cb_unfiltered_dterm.ax.set_xticks([])
+        cb_unfiltered_dterm.ax.set_xticklabels([])
+        cb_unfiltered_dterm.ax.tick_params(axis='x', bottom=False, top=False)
+        
+        # Remove all spines (borders) around the colorbar
+        for spine in cb_unfiltered_dterm.ax.spines.values():
+            spine.set_visible(False)
+    
     # Add info text including gain value
-    ax_info = fig.add_subplot(gs[23:25, 0:15])
-    ax_info.text(0.5, 0.5, f'PID-Analyzer style noise plot (Gain: {gain}x)', 
+    ax_info = fig.add_subplot(gs[23:25, 0:4])
+    ax_info.text(0.5, 0.5, f'PID-Analyzer style noise plot with unfiltered D-term (Gain: {gain}x)', 
                 ha='center', va='center', color='white', alpha=0.7)
     ax_info.axis('off')
     
@@ -335,10 +514,10 @@ def plot_noise_from_df(df, max_freq=1000, gain=1.0):
     fig.text(0.5, 0.025, "Throttle (%)", ha='center', va='center', fontsize=26, color='black', weight='bold')
     fig.text(0.015, 0.5, "Frequency (Hz)", ha='center', va='center', fontsize=26, color='black', weight='bold', rotation=90)
     # Column headers, aligned to plot centers
-    col_xs = [0.17, 0.5, 0.83]
-    col_titles = ["Gyro (filtered)", "Gyro (raw)", "D-Term"]
+    col_xs = [0.125, 0.375, 0.625, 0.875]
+    col_titles = ["Gyro (filtered)", "Gyro (raw)", "D-Term (filtered)", "D-Term (unfiltered)"]
     for i, title in enumerate(col_titles):
-        fig.text(col_xs[i], 0.965, title, ha='center', va='bottom', fontsize=16, color='black', weight='bold', family='sans-serif')
+        fig.text(col_xs[i], 0.965, title, ha='center', va='bottom', fontsize=14, color='black', weight='bold', family='sans-serif')
     # Row headers
     row_titles = ["Roll", "Pitch", "Yaw"]
     row_y_positions = [0.80, 0.65, 0.70]  # Moved Yaw higher from 0.60 to 0.70 to be more centered
@@ -411,9 +590,9 @@ def generate_individual_noise_figures(df, max_freq=1000, gain=1.0):
             # Maximize plot area and eliminate black bar at top
             fig_gyro.tight_layout(pad=0.5)
         figures.append(fig_gyro)
-        # Debug
+        # Debug (raw gyro data)
         debug_col = None
-        for pattern in [f'debug[{axis_idx}]', f'debug{axis_idx}']:
+        for pattern in [f'gyroUnfilt[{axis_idx}]', f'debug[{axis_idx}]', f'debug{axis_idx}']:
             if pattern in df.columns:
                 debug_col = pattern
                 break
@@ -479,11 +658,42 @@ def generate_individual_noise_figures(df, max_freq=1000, gain=1.0):
             # Maximize plot area and eliminate black bar at top
             fig_dterm.tight_layout(pad=0.5)
         figures.append(fig_dterm)
+        
+        # Unfiltered D-term
+        d_gain = get_d_gain(df, axis_idx)
+        unfiltered_dterm = compute_unfiltered_dterm(debug, time, d_gain)
+        unfiltered_dterm_result = process_gyro_data(time, unfiltered_dterm, throttle, name=f"unfiltered dterm {axis_name}", gain=gain)
+        fig_unfiltered_dterm = plt.figure(figsize=(7, 5))
+        fig_unfiltered_dterm.patch.set_facecolor('white')
+        ax_unfiltered_dterm = fig_unfiltered_dterm.add_subplot(111)
+        if unfiltered_dterm_result is not None:
+            pc_unfiltered_dterm = ax_unfiltered_dterm.pcolormesh(
+                unfiltered_dterm_result['throt_axis'],
+                unfiltered_dterm_result['freq_axis'],
+                unfiltered_dterm_result['hist2d_sm'] + 1e-6,
+                norm=colors.LogNorm(vmin=1, vmax=unfiltered_dterm_result['max']+1),
+                cmap='inferno'
+            )
+            ax_unfiltered_dterm.set_title(f'D-Term (unfiltered) {axis_name}', color='black', loc='left', pad=5)
+            ax_unfiltered_dterm.set_ylabel('Frequency (Hz)', color='black')
+            ax_unfiltered_dterm.set_xlabel('Throttle (%)', color='black')
+            ax_unfiltered_dterm.set_ylim(0, max_freq)
+            ax_unfiltered_dterm.set_xlim(0, 100)
+            ax_unfiltered_dterm.set_facecolor('black')
+            ax_unfiltered_dterm.grid(True, color='white', alpha=0.3, linestyle='-')
+            ax_unfiltered_dterm.tick_params(axis='x', colors='black')
+            ax_unfiltered_dterm.tick_params(axis='y', colors='black')
+            for spine in ax_unfiltered_dterm.spines.values():
+                spine.set_color('black')
+            # Maximize plot area and eliminate black bar at top
+            fig_unfiltered_dterm.tight_layout(pad=0.5)
+        figures.append(fig_unfiltered_dterm)
 
     # Build results for all axes and types
     gyro_results = []
     debug_results = []
     dterm_results = []
+    unfiltered_dterm_results = []
     for idx in range(3):
         # Gyro
         gyro_col = None
@@ -496,9 +706,9 @@ def generate_individual_noise_figures(df, max_freq=1000, gain=1.0):
         else:
             gyro = np.zeros_like(time)
         gyro_results.append(process_gyro_data(time, gyro, throttle, name=f"gyro {axis_labels[idx]}", gain=gain))
-        # Debug
+        # Debug (raw gyro data)
         debug_col = None
-        for pattern in [f'debug[{idx}]', f'debug{idx}']:
+        for pattern in [f'gyroUnfilt[{idx}]', f'debug[{idx}]', f'debug{idx}']:
             if pattern in df.columns:
                 debug_col = pattern
                 break
@@ -514,17 +724,23 @@ def generate_individual_noise_figures(df, max_freq=1000, gain=1.0):
         else:
             dterm = np.zeros_like(time)
         dterm_results.append(process_gyro_data(time, dterm, throttle, name=f"dterm {axis_labels[idx]}", gain=gain))
+        
+        # Unfiltered D-term
+        d_gain = get_d_gain(df, idx)
+        unfiltered_dterm = compute_unfiltered_dterm(debug, time, d_gain)
+        unfiltered_dterm_results.append(process_gyro_data(time, unfiltered_dterm, throttle, name=f"unfiltered dterm {axis_labels[idx]}", gain=gain))
 
-    # Create a single figure with 9 axes (3x3)
-    fig = plt.figure(figsize=(22, 20))
+    # Create a single figure with 12 axes (3x4)
+    fig = plt.figure(figsize=(30, 20))
     fig.patch.set_facecolor('white')
     # Further adjust spacing to completely eliminate the black bar at top
-    gs = gridspec.GridSpec(3, 3, wspace=0.2, hspace=0.3, top=0.94, bottom=0.13, left=0.08, right=0.95)
+    gs = gridspec.GridSpec(3, 4, wspace=0.2, hspace=0.3, top=0.94, bottom=0.13, left=0.08, right=0.95)
     axes = []
     all_pcs = []
     vmax_list = []
     for i, axis_name in enumerate(axis_labels):
-        for j, (result, title) in enumerate(zip([gyro_results[i], debug_results[i], dterm_results[i]], [f'Gyro {axis_name}', f'Debug {axis_name}', f'D-Term {axis_name}'])):
+        for j, (result, title) in enumerate(zip([gyro_results[i], debug_results[i], dterm_results[i], unfiltered_dterm_results[i]], 
+                                               [f'Gyro {axis_name}', f'Debug {axis_name}', f'D-Term {axis_name}', f'D-Term (unfiltered) {axis_name}'])):
             ax = fig.add_subplot(gs[i, j])
             ax.set_facecolor('black')
             if result is not None:
@@ -557,8 +773,10 @@ def generate_individual_noise_figures(df, max_freq=1000, gain=1.0):
                 plot_title = f'Gyro (filtered) {axis_name}'
             elif j == 1:
                 plot_title = f'Gyro (raw) {axis_name}'
-            else:
+            elif j == 2:
                 plot_title = f'D-Term {axis_name}'
+            else:
+                plot_title = f'D-Term (unfiltered) {axis_name}'
             ax.set_title(plot_title, color='black', fontsize=10, pad=5, loc='left')
             axes.append(ax)
 
